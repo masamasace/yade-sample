@@ -21,16 +21,16 @@ frictangle = 35 / 180 * np.pi    # 35度をラジアンに変換
 density = 3700.0                 # 密度大きすぎないですか？
 young = 3e8
 iso_consolidation_stress = 100e3 # 等方圧密時の目標鉛直応力：100kPa=100×10^3Pa
-shear_stress_amplitude = 20e3    # 繰り返しせん断時の目標最大せん断振幅：20kPa
-shear_strain_amplitude = 10    # 繰り返しせん断時の目標最大せん断振幅(無次元)：35%
-shear_thres_torrelance = 0.005   # 繰り返しせん断時のせん断振幅のばらつき(無次元)：0.5%
+shear_stress_amplitude = 20e3    # 繰り返しせん断時の目標最大せん断応力振幅：20kPa
+shear_strain_amplitude = 0.5     # 繰り返しせん断時の目標最大せん断ひずみ振幅(無次元)
 max_strain_rate_con = 0.5        # 圧密時の最大ひずみ速度
-max_strain_rate_cyc = 0.0005     # 繰り返しせん断時の最大ひずみ速度
-state_index = 0                  # 繰り返し載荷を始めるかどうか(圧密が終了したかどうか)のフラグ
-flag_cyclic_forward = True       # 繰り返し載荷の方向を決めるフラグ
+max_strain_rate_cyc = 0.00000005     # 繰り返しせん断時の最大ひずみ速度
+state_index = 0                  # 現時点での制御方法(0: 圧密、1: 繰り返しせん断(増加)、2:繰り返しせん断(減少))
 target_num_cycle = 10            # 目標の繰り返し回数
 current_num_cycle = 0            # 現時点での繰り返し回数
-flag_stress_threshold = False    # 繰り返しせん断時の折返しを応力で定義するか、ひずみで定義するかのフラグ。Trueが応力でFalseがひずみ
+nSteps_cycle = 100000            # 半周期の繰り返しでの計算ステップ数です。正直どれぐらいまで小さいすればよいのかはわかっていません。計算が破綻するようであれば、とりあえず倍々で大きくしていくことをおすすめします。
+flag_stress_threshold = False     # 繰り返しせん断時の折返しを応力で定義するか、ひずみで定義するかのフラグ。Trueが応力でFalseがひずみ
+mod = 0.1                       # 理想応力偏差からひずみ速度増分を計算する際にかかる係数。デフォルトは0.1。
 
 # CohFrictMatクラスはどうやら粘着力を考慮できる材料のクラスみたいですね。ただ
 # https://yade-dem.org/doc/yade.wrapper.html#yade.wrapper.CohFrictMat
@@ -46,15 +46,28 @@ O.materials.append(mat_sp)
 sp = pack.randomPeriPack(radius=0.10, initSize=Vector3(6, 6, 2), memoizeDb='/tmp/packDb.sqlite')
 sp.toSimulation(color=(0, 0, 1))  # pure blue
 
+# 解析の際の時間ステップを決めるもの。本来であればすべての2粒子間接触から求まる固有周期の最小値を時間ステップとして採用するべき
+# ただ初期状態では接触点の数が0の場合もあるので、近似的に粒子のP波速度の0.1倍を使う。(Class Referenceと計算式が違う...)
+O.dt = .1 * PWaveTimeStep()
+
 # 下のコードはどのような意味がある？このコードを有効化すると粒子同士の内部摩擦角が0になってしまうけど...
 # O.materials[0].frictionAngle = 0
 
 """
-等方圧密用の境界制御のためのクラスです。若干制御に戸惑ってメモ書きのため、詳しく書きます。
+境界制御のためのクラスです。若干制御に戸惑ってメモ書きのため、詳しく書きます。
 # ひずみが目標値として設定された場合は、適切な(調節された)ひずみ速度が直接適用されます。
 # 応力が目標値として設定された場合には、ひずみ推定器が用いられます。
 ## このひずみ推定器というのは、2つ前のステップでの応力値からなるべく次のステップでの理想的な値になるべく近くなるように、決定する手法です。(将来的にこのアルゴリズムは修正される可能性があるが、現時点でも十分にロバストである)
+
 # すべてが応力で指定された場合、初期ステップで良い推定値が必要→このためにコンプライアンスマトリックスを導入する必要がある
+
+# (かなり手間取った点)インスタンス変数として理想応力(stressIdeal)が存在する
+## このstressIdealは現応力との差の計算に使われ、載荷方向を決めるために使われる
+## このstressIdealは"現在の初期応力に関わらず"、応力0から最終ステップ時に所定応力になるような線形補間で求められている。
+### この点はPeriIsoCompressor.cppの389, 410行目を参照
+## そのため圧密からせん断に移行するような場合、単にgoalとstressMaskを設定しただけではstressIdealが0から次第に上がっていくため、いつまで立っても載荷が終了しない減少に陥る
+## このため、等方応力状態から定圧でせん断するような場合には、xxPath = ((すごく小さい0に近い少数, 1), (1, 1))、のような初期インスタンスが必要
+
 
 """
 Peri3D_iso = Peri3dController(
@@ -70,10 +83,12 @@ Peri3D_iso = Peri3dController(
     
     # 説明が少し難しいんですが、順番にします。まず0bというのはpythonでは0bのあとに続く数字は2進数だよという目印です。
     # 問題は111111の部分なんですが6桁の数字のそれぞれが上のテンソルの位置に対応します。
-    # 例えば最初の1は、テンソルの00成分に対応します。
+    # 注意点として最下位ビットから00, 11, 22, 12, 02, 01の順で並んでいるので以下のような対応関係になります。
+    # stressMask = 0b    1    1    1    1    1    1
+    #                   ↑01  ↑02  ↑12  ↑22  ↑11  ↑00
     # そして、それぞれの数字は0か1の値を取ります。
     # 0の場合はそのテンソルの目標値がひずみであること、1の場合は応力であることを表します。
-    # なので下の例だと、すべての成分の目標値は応力であることを示します。
+    # なので上の例だと、すべての成分の目標値は応力であることを示します。
     stressMask = 0b111111,
     
     # 最大のひずみ速度を決めます。大きすぎると負のダイレタンシーが発生した際に応力を下げすぎてしまうので、一旦かなり小さい値にして、繰り返し載荷で発生するひずみ振幅よりも小さく(例えば1/10とか)にすればいいのではないでしょうか？
@@ -109,6 +124,12 @@ Peri3D_cyclic_forward = Peri3dController(
     goal = goal_forward,
     stressMask = stressMask_temp,
     maxStrainRate = max_strain_rate_cyc,
+    mod = mod,
+    nSteps = 2000000,
+    xxPath = ((0.00001, 1), (1, 1)),
+    yyPath = ((0.00001, 1), (1, 1)),
+    zzPath = ((0.00001, 1), (1, 1)),
+    zxPath = ((0.00001, 1), (1, 1)),
     doneHook = "checkState()"
 )
 
@@ -117,6 +138,12 @@ Peri3D_cyclic_backward = Peri3dController(
     goal = goal_backward,
     stressMask = stressMask_temp,
     maxStrainRate = max_strain_rate_cyc,
+    mod = mod,
+    nSteps = 2000000,
+    xxPath = ((0.00001, 1), (1, 1)),
+    yyPath = ((0.00001, 1), (1, 1)),
+    zzPath = ((0.00001, 1), (1, 1)),
+    zxPath = ((0.00001, 1), (1, 1)),
     doneHook = "checkState()"
 )
 
@@ -141,13 +168,13 @@ O.engines = [
     
 ]
 
-O.dt = .1 * PWaveTimeStep()
+print(O.dt)
 
 # 状態監視用の関数です
 def checkState():
     
     global flag_cyclic_forward
-    global state_index, iso_consolidation_stress, shear_stress_amplitude, shear_strain_amplitude, current_num_cycle, target_num_cycle, shear_thres_torrelance
+    global state_index, iso_consolidation_stress, shear_stress_amplitude, shear_strain_amplitude, current_num_cycle, target_num_cycle
     
     s00, s11, s22, s12, s02, s01 = O.engines[3].stress
     e00, e11, e22, e12, e02, e01 = O.engines[3].strain
@@ -163,8 +190,10 @@ def checkState():
             print(O.engines[3])
             engines_temp = list(O.engines)
             engines_temp[3] = Peri3D_cyclic_forward
+            # 次のコードがないと、ひずみの値がリセットされてしまいます。圧密終了時点でのすべての歪成分が繰り返し載荷開始時に保持されるようにしています。
+            engines_temp[3].strain = (e00, e11, e22, e12, e02, e01)
             O.engines = engines_temp    
-            print(O.engines[3].strainGoal, O.engines[3].stressGoal)
+            print(O.engines[3].stress, O.engines[3].strain, O.engines[3].stressIdeal)
             
             O.run()
     
@@ -173,13 +202,13 @@ def checkState():
         print("Cyclic loading has just finished!")
         finish_simulation()
         
-    # 繰り返し載荷(せん断応力増加)時の状態チェックです
+    # 繰り返し載荷(せん断応力増加)時の状態チェッstresvsGoalクです
     elif state_index == 1:
         if (current_num_cycle <= target_num_cycle):            
             if flag_stress_threshold:
                 flag_reverse = (s02 > shear_stress_amplitude)
             else:
-                flag_reverse = (e02 > shear_strain_amplitude )
+                flag_reverse = (e02 > shear_strain_amplitude)
            
             if flag_reverse:
                 print("Current Cycle: " + str(current_num_cycle)) 
@@ -189,6 +218,7 @@ def checkState():
                 print(O.engines[3])  
                 engines_temp = list(O.engines)
                 engines_temp[3] = Peri3D_cyclic_backward
+                engines_temp[3].strain = (e00, e11, e22, e12, e02, e01)
                 O.engines = engines_temp
                 print(O.engines[3])  
                 
@@ -196,7 +226,8 @@ def checkState():
     
     # 繰り返し載荷(せん断応力減少)時の状態チェックです
     elif state_index == 2:
-        if (current_num_cycle <= target_num_cycle):            
+        if (current_num_cycle <= target_num_cycle):
+            print(s02, e02, shear_strain_amplitude)            
             if flag_stress_threshold:
                 flag_reverse = (s02 < -shear_stress_amplitude)
             else:
@@ -210,6 +241,7 @@ def checkState():
                 print(O.engines[3])  
                 engines_temp = list(O.engines)
                 engines_temp[3] = Peri3D_cyclic_forward
+                engines_temp[3].strain = (e00, e11, e22, e12, e02, e01)
                 O.engines = engines_temp
                 print(O.engines[3])  
                 
@@ -228,7 +260,8 @@ def addPlotData():
     s00, s11, s22, s12, s02, s01 = O.engines[3].stress / 1000
     e00, e11, e22, e12, e02, e01 = O.engines[3].strain
     gs00, gs11, gs22, gs12, gs02, gs01 = O.engines[3].stressGoal / 1000
-    gs00, gs11, gs22, gs12, gs02, gs01 = O.engines[3].strainGoal
+    is00, is11, is22, is12, is02, is01 = O.engines[3].stressIdeal / 1000
+    ge00, ge11, ge22, ge12, ge02, ge01 = O.engines[3].strainGoal
     
     print('s00: {: .2f}'.format(s00),
           ' s11: {: .2f}'.format(s11),
@@ -236,9 +269,11 @@ def addPlotData():
           ' s12: {: .2f}'.format(s12),
           ' s02: {: .2f}'.format(s02),
           ' s01: {: .2f}'.format(s01),
-          ' e02: {: .5f}'.format(e02 * 100),
-          ' gs02: {: .5f}'.format(gs02))
+          ' e02: {: .5f}'.format(e02),
+          ' nSteps: {: .5f}'.format(O.engines[3].nSteps))
     
+    print(O.engines[3].stressIdeal)
+        
     plot.addData(i = i,
                  s00 = s00,
                  s22 = s22,
