@@ -24,13 +24,14 @@ iso_consolidation_stress = 100e3 # 等方圧密時の目標鉛直応力：100kPa
 shear_stress_amplitude = 20e3    # 繰り返しせん断時の目標最大せん断応力振幅：20kPa
 shear_strain_amplitude = 0.5     # 繰り返しせん断時の目標最大せん断ひずみ振幅(無次元)
 max_strain_rate_con = 0.5        # 圧密時の最大ひずみ速度
-max_strain_rate_cyc = 0.00000005     # 繰り返しせん断時の最大ひずみ速度
+max_strain_rate_cyc = 0.05      # 繰り返しせん断時の最大ひずみ速度
 state_index = 0                  # 現時点での制御方法(0: 圧密、1: 繰り返しせん断(増加)、2:繰り返しせん断(減少))
 target_num_cycle = 10            # 目標の繰り返し回数
 current_num_cycle = 0            # 現時点での繰り返し回数
-nSteps_cycle = 100000            # 半周期の繰り返しでの計算ステップ数です。正直どれぐらいまで小さいすればよいのかはわかっていません。計算が破綻するようであれば、とりあえず倍々で大きくしていくことをおすすめします。
-flag_stress_threshold = False     # 繰り返しせん断時の折返しを応力で定義するか、ひずみで定義するかのフラグ。Trueが応力でFalseがひずみ
+nSteps_cycle = 1000           # 半周期の繰り返しでの計算ステップ数です。正直どれぐらいまで小さいすればよいのかはわかっていません。計算が破綻するようであれば、とりあえず倍々で大きくしていくことをおすすめします。
+flag_stress_threshold = True     # 繰り返しせん断時の折返しを応力で定義するか、ひずみで定義するかのフラグ。Trueが応力でFalseがひずみ
 mod = 0.1                       # 理想応力偏差からひずみ速度増分を計算する際にかかる係数。デフォルトは0.1。
+path_first_relative_value = (1 / nSteps_cycle) * 2
 
 # CohFrictMatクラスはどうやら粘着力を考慮できる材料のクラスみたいですね。ただ
 # https://yade-dem.org/doc/yade.wrapper.html#yade.wrapper.CohFrictMat
@@ -62,11 +63,19 @@ O.dt = .1 * PWaveTimeStep()
 # すべてが応力で指定された場合、初期ステップで良い推定値が必要→このためにコンプライアンスマトリックスを導入する必要がある
 
 # (かなり手間取った点)インスタンス変数として理想応力(stressIdeal)が存在する
-## このstressIdealは現応力との差の計算に使われ、載荷方向を決めるために使われる
+## このstressIdealは現応力との差の計算に使われ、ひずみ速度の載荷方向を決めるために使われる
 ## このstressIdealは"現在の初期応力に関わらず"、応力0から最終ステップ時に所定応力になるような線形補間で求められている。
 ### この点はPeriIsoCompressor.cppの389, 410行目を参照
 ## そのため圧密からせん断に移行するような場合、単にgoalとstressMaskを設定しただけではstressIdealが0から次第に上がっていくため、いつまで立っても載荷が終了しない減少に陥る
 ## このため、等方応力状態から定圧でせん断するような場合には、xxPath = ((すごく小さい0に近い少数, 1), (1, 1))、のような初期インスタンスが必要
+# ただこの"すごく小さい0に近い少数"の決め方が曲者
+## xxPath (他のyyPathなどの考え方も同じ)はタプルで指定する。例えば((1, 3), (2, 4))で、nStepsが1000、goalの値が100kPaであれば次のような目標値を取るような行動をする
+### nStep = 0 のとき 0kPa ← 書かれていないがこれが重要
+### nStep = 500 (1000 * 1 / 2) のとき 75kPa (100 * 3 / 4)
+### nStep = 1000 (1000 * 2 / 2) のとき 100kPa (100 * 4 * 4)
+## なので((すごく小さい0に近い少数, 1), (1, 1))とすることで、最初のステップから所定の目標値を目指すように設定できる
+## ただ小さすぎる値を入力しても良くない
+### 理由は解明中なのでとりあえず暫定的に
 
 
 """
@@ -125,11 +134,11 @@ Peri3D_cyclic_forward = Peri3dController(
     stressMask = stressMask_temp,
     maxStrainRate = max_strain_rate_cyc,
     mod = mod,
-    nSteps = 2000000,
-    xxPath = ((0.00001, 1), (1, 1)),
-    yyPath = ((0.00001, 1), (1, 1)),
-    zzPath = ((0.00001, 1), (1, 1)),
-    zxPath = ((0.00001, 1), (1, 1)),
+    nSteps = nSteps_cycle,
+    xxPath = ((0, 1), (1, 1)),
+    yyPath = ((0, 1), (1, 1)),
+    zzPath = ((0, 1), (1, 1)),
+    # zxPath = ((0, 1), (1, 1)),
     doneHook = "checkState()"
 )
 
@@ -139,11 +148,11 @@ Peri3D_cyclic_backward = Peri3dController(
     stressMask = stressMask_temp,
     maxStrainRate = max_strain_rate_cyc,
     mod = mod,
-    nSteps = 2000000,
-    xxPath = ((0.00001, 1), (1, 1)),
-    yyPath = ((0.00001, 1), (1, 1)),
-    zzPath = ((0.00001, 1), (1, 1)),
-    zxPath = ((0.00001, 1), (1, 1)),
+    nSteps = nSteps_cycle,
+    xxPath = ((path_first_relative_value, 1), (1, 1)),
+    yyPath = ((path_first_relative_value, 1), (1, 1)),
+    zzPath = ((path_first_relative_value, 1), (1, 1)),
+    zxPath = ((path_first_relative_value, 1), (1, 1)),
     doneHook = "checkState()"
 )
 
@@ -178,6 +187,8 @@ def checkState():
     
     s00, s11, s22, s12, s02, s01 = O.engines[3].stress
     e00, e11, e22, e12, e02, e01 = O.engines[3].strain
+    
+    
             
     # 圧密時の状態チェックです
     if state_index == 0:         
@@ -193,7 +204,6 @@ def checkState():
             # 次のコードがないと、ひずみの値がリセットされてしまいます。圧密終了時点でのすべての歪成分が繰り返し載荷開始時に保持されるようにしています。
             engines_temp[3].strain = (e00, e11, e22, e12, e02, e01)
             O.engines = engines_temp    
-            print(O.engines[3].stress, O.engines[3].strain, O.engines[3].stressIdeal)
             
             O.run()
     
@@ -202,8 +212,9 @@ def checkState():
         print("Cyclic loading has just finished!")
         finish_simulation()
         
-    # 繰り返し載荷(せん断応力増加)時の状態チェッstresvsGoalクです
+    # 繰り返し載荷(せん断応力増加)時の状態チェックです
     elif state_index == 1:
+             
         if (current_num_cycle <= target_num_cycle):            
             if flag_stress_threshold:
                 flag_reverse = (s02 > shear_stress_amplitude)
@@ -219,6 +230,7 @@ def checkState():
                 engines_temp = list(O.engines)
                 engines_temp[3] = Peri3D_cyclic_backward
                 engines_temp[3].strain = (e00, e11, e22, e12, e02, e01)
+                engines_temp[3].progress = 0
                 O.engines = engines_temp
                 print(O.engines[3])  
                 
@@ -227,7 +239,6 @@ def checkState():
     # 繰り返し載荷(せん断応力減少)時の状態チェックです
     elif state_index == 2:
         if (current_num_cycle <= target_num_cycle):
-            print(s02, e02, shear_strain_amplitude)            
             if flag_stress_threshold:
                 flag_reverse = (s02 < -shear_stress_amplitude)
             else:
@@ -242,6 +253,7 @@ def checkState():
                 engines_temp = list(O.engines)
                 engines_temp[3] = Peri3D_cyclic_forward
                 engines_temp[3].strain = (e00, e11, e22, e12, e02, e01)
+                engines_temp[3].progress = 0
                 O.engines = engines_temp
                 print(O.engines[3])  
                 
@@ -256,7 +268,7 @@ def finish_simulation():
 def addPlotData():
     i = O.iter
     
-    # (要修正)O.engines[3].stressを違う関数2回呼び出しているので遅くなる可能性があります。
+    # (要修正)O.engines[3].stressを違う関数で2回呼び出しているので遅くなる可能性があります。
     s00, s11, s22, s12, s02, s01 = O.engines[3].stress / 1000
     e00, e11, e22, e12, e02, e01 = O.engines[3].strain
     gs00, gs11, gs22, gs12, gs02, gs01 = O.engines[3].stressGoal / 1000
@@ -272,7 +284,9 @@ def addPlotData():
           ' e02: {: .5f}'.format(e02),
           ' nSteps: {: .5f}'.format(O.engines[3].nSteps))
     
-    print(O.engines[3].stressIdeal)
+    # print(O.engines[3].strainRate)
+    # print(O.engines[3].stressIdeal)
+    # print(O.engines[3].stressGoal)
         
     plot.addData(i = i,
                  s00 = s00,
