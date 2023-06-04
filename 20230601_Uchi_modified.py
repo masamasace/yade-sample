@@ -69,7 +69,7 @@ Peri3D_iso = Peri3dController(
     doneHook = "cyclic_shear()",
     
     # 最大のひずみ速度を決めます。大きすぎると負のダイレタンシーが発生した際に応力を下げすぎてしまうので、一旦かなり小さい値にして、繰り返し載荷で発生するひずみ振幅よりも小さく(例えば1/10とか)にすればいいのではないでしょうか？
-    maxStrainRate = 0.005
+    maxStrainRate = 0.5
 )
 
 # 繰り返し載荷(せん断力を増やす際)の際の境界制御のクラスです。
@@ -82,7 +82,10 @@ Peri3D_cyclic_forward = Peri3dController(
     
     nSteps = 2000,
     doneHook = "cyclic_shear()",
-    maxStrainRate = 0.005
+    maxStrainRate = 0.05,
+    xxPath = ((0, 1), (1, 1)),
+    yyPath = ((0, 1), (1, 1)),
+    zzPath = ((0, 1), (1, 1))
 )
 
 # 繰り返し載荷(せん断力を減らす際際)の際の境界制御のクラスです。
@@ -95,8 +98,11 @@ Peri3D_cyclic_backward = Peri3dController(
     
     nSteps = 2000,
     doneHook = "cyclic_shear()",
-    maxStrainRate = 0.005
-)
+    maxStrainRate = 0.05,
+    xxPath = ((0, 1), (1, 1)),
+    yyPath = ((0, 1), (1, 1)),
+    zzPath = ((0, 1), (1, 1))
+    )
 
 # エンジンと呼ばれる部分です。
 # 詳しくは割愛します。
@@ -124,11 +130,21 @@ def cyclic_shear():
     global flag_cyclic_loading, flag_cyclic_forward
     global iso_consolidation_stress, shear_stress_amplitude, current_num_cycle, target_num_cycle, shear_stress_torrelance
     
+    e00, e11, e22, e12, e02, e01 = O.engines[3].strain
+    s00, s11, s22, s12, s02, s01 = O.engines[3].stress
+    
     if not flag_cyclic_loading:
         print("Consolidation has finished! Now proceeding to cyclic loading")
         flag_cyclic_loading = True
         
         O.engines = O.engines[0:3] + [Peri3D_cyclic_forward] + O.engines[4:]
+        O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
+        O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
+        O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
+
+        O.engines[3].progress = 0
+
+        
         
     else:
         if (current_num_cycle > target_num_cycle):
@@ -138,20 +154,24 @@ def cyclic_shear():
             
         elif (current_num_cycle <= target_num_cycle) and flag_cyclic_forward:
             
-            s02 = O.engines[3].stress[4]
-            flag_under_torrelance = (shear_stress_amplitude - s02) < shear_stress_torrelance
+            flag_under_torrelance = (shear_stress_amplitude - s02) < shear_stress_torrelance           
            
             if flag_under_torrelance:
                 print("Current Cycle: " + str(current_num_cycle)) 
                 
                 flag_cyclic_forward = False
                 O.engines = O.engines[0:3] + [Peri3D_cyclic_backward] + O.engines[4:]
+                O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
+                O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
+                O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
+                O.engines[3].progress = 0
+                
+                
                 current_num_cycle += 0.5
 
                 
         elif (current_num_cycle <= target_num_cycle) and not flag_cyclic_forward:
                         
-            s02 = O.engines[3].stress[4]
             flag_under_torrelance = (-shear_stress_amplitude - s02) > -shear_stress_torrelance
             
             if flag_under_torrelance: 
@@ -159,6 +179,11 @@ def cyclic_shear():
                 
                 flag_cyclic_forward = True
                 O.engines = O.engines[0:3] + [Peri3D_cyclic_forward] + O.engines[4:]
+                O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
+                O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
+                O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
+                O.engines[3].progress = 0
+                
                 current_num_cycle += 0.5
         
 # 載荷が終了した際に呼ばれる関数です。
@@ -172,14 +197,16 @@ def addPlotData():
     e00, e11, e22, e12, e02, e01 = O.engines[3].strain
     gs00, gs11, gs22, gs12, gs02, gs01 = O.engines[3].stressGoal / 1000
     
-    print('s00: {: .2f}'.format(s00),
+    # temp = 2 * (O.engines[3].stress - O.engines[3].stressIdeal) - (O.engines[3].stressOld - (O.engines[3].stressIdeal - O.engines[3].stressRate * O.dt))
+    print(O.engines[3].stressIdeal, O.engines[3].stressRate)
+
+    print('pro: {: .2f}'.format(O.engines[3].progress),
+          ' s00: {: .2f}'.format(s00),
           ' s11: {: .2f}'.format(s11),
           ' s22: {: .2f}'.format(s22),
           ' s12: {: .2f}'.format(s12),
           ' s02: {: .2f}'.format(s02),
-          ' s01: {: .2f}'.format(s01),
-          ' gs22: {: .2f}'.format(gs22),
-          ' gs02: {: .2f}'.format(gs02))
+          ' s01: {: .2f}'.format(s01))
     
     plot.addData(i = i,
                  s00 = s00,
