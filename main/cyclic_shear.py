@@ -33,13 +33,14 @@ shear_stress_torrelance = 0.5e3         # (要修正)繰り返しせん断時の
 flag_cyclic_loading = False             # 繰り返しせん断を始めるかどうか(圧密が終了したかどうか)のフラグです。
 flag_cyclic_forward = True              # 繰り返しせん断の方向を決めるフラグです。
 flag_stress_threshold = True            # 繰り返しせん断時の反転を応力で定義するか、ひずみで定義するかを決めます。Trueが応力定義です。
-target_num_cycle = 10                   # 目標の繰り返し回数です。
+target_num_cycle = 2                    # 目標の繰り返し回数です。
 current_num_cycle = 0                   # 現時点での繰り返し回数です。
 consolidation_nSteps = 1000             # 圧密時での最低限必要なステップ数です。
 cyclic_loading_nSteps = 2000            # 繰り返しせん断時での最低限必要なステップ数です。
 consolidation_max_strain_rate = 0.5     # 圧密時での最大ひずみ速度です。
 cyclic_loading_max_strain_rate = 0.5    # 圧密時での最大ひずみ速度です。反転条件が歪の場合はかなり小さくすることをおすすめします。ex)0.0005とか
 state_index = 0                         # 0:圧密、1:繰り返しせん断(Forward)、2:繰り返しせん断(Backward)の状態管理をするための変数です。
+flag_header_done = False                # アウトプットファイルにヘッダーが生成されたかどうかのフラグ
 
 # 結果を保存するためのファイルとフォルダを作成します。
 dt_now = datetime.datetime.now()
@@ -48,8 +49,6 @@ print("Start simulation started at " + dt_now.strftime('%Y/%m/%d %H:%M:%S.%f'))
 output_folder_path = Path(os.path.abspath(os.path.dirname(sys.argv[0]))).parent / "result"
 output_folder_path.mkdir(exist_ok=True)
 output_file_path = output_folder_path / (dt_now.strftime('%Y-%m-%d_%H-%M-%S') + "_output.csv")
-
-
 
 ############## 接触モデルの定義 ##############
 # 2つの粒子の間に働く力関係を計算するためのモデルを定義します。 
@@ -71,6 +70,10 @@ sp = pack.randomPeriPack(radius=0.10,
 
 # 上のコードで生成した粒子をOmegaインスタンスに渡します。ここで粒子の色付けを行うことができます。
 sp.toSimulation(color=(0, 0, 1))
+
+# 解析の際の時間ステップを決めるコードです。
+# MEMO: 本来であればすべての2粒子間接触から求まる固有周期の最小値を時間ステップとして採用するべきなんですが、初期状態では接触点の数が0の場合もあるので、近似的に粒子のP波速度の0.1倍を使っています。(Class Referenceと計算式が違うがほとんどのサンプルコードがこれぐらいの値を採用している...)
+O.dt = .1 * PWaveTimeStep()
 
 
 ############## 境界制御モデルの定義 ##############
@@ -187,20 +190,10 @@ O.engines = [
     PyRunner(realPeriod=0.5, command="addPlotData()")
 ]
 
-# 解析の際の時間ステップを決めるコードです。
-# MEMO: 本来であればすべての2粒子間接触から求まる固有周期の最小値を時間ステップとして採用するべきなんですが、初期状態では接触点の数が0の場合もあるので、近似的に粒子のP波速度の0.1倍を使っています。(Class Referenceと計算式が違うがほとんどのサンプルコードがこれぐらいの値を採用している...)
-O.dt = .1 * PWaveTimeStep()
-
 # エネルギーを追跡します
 O.trackEnergy = True
 
-# エネルギー項を含めた出力ファイルのヘッダーを用意します。
-key_list = "step,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01"
-for temp in O.energy.keys():
-    key_list += "," + temp
-key_list += "\n"
-with open(output_file_path, 'w') as f:
-    f.write(key_list)
+
 
 # 状態遷移用の関数です
 def checkState():
@@ -217,6 +210,7 @@ def checkState():
         
         O.engines = O.engines[0:3] + [Peri3D_cyclic_forward] + O.engines[4:]
         O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
+        O.engines[3].stress = (s00, s11, s22, s12, s02, s01)
         O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
         O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
         O.engines[3].progress = 0
@@ -240,6 +234,7 @@ def checkState():
                 
                 O.engines = O.engines[0:3] + [Peri3D_cyclic_backward] + O.engines[4:]
                 O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
+                O.engines[3].stress = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
                 O.engines[3].progress = 0
@@ -261,6 +256,7 @@ def checkState():
 
                 O.engines = O.engines[0:3] + [Peri3D_cyclic_forward] + O.engines[4:]
                 O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
+                O.engines[3].stress = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
                 O.engines[3].progress = 0
@@ -273,8 +269,26 @@ def checkState():
 def finish_simulation():
     O.pause()
     
+    # エネルギーの項が全て入っていない場合があるため、もう一度ファイルを読み込んでヘッダーだけ修正します。
+    with open(output_file_path, 'r') as f:
+        lines = f.readlines()
+    
+    key_list = "step,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01"
+    energy_dict = dict(O.energy.items())
+    for temp in list(energy_dict.keys()):
+        key_list += "," + temp
+    key_list += "\n"
+    
+    lines[0] = key_list
+    
+    with open(output_file_path, 'w') as f:
+        f.writelines(lines)
+    
+    
 # 図化のための関数です。
 def addPlotData():
+    global flag_header_done, previous_energy_header
+    
     i = O.iter
     s00, s11, s22, s12, s02, s01 = O.engines[3].stress / 1000
     e00, e11, e22, e12, e02, e01 = O.engines[3].strain
@@ -285,11 +299,11 @@ def addPlotData():
     deviatoric_stress = ((((s00 - s11) ** 2 + (s11 - s22) ** 2 + (s22 - s00) ** 2) / 6 + s01 ** 2 + s12 ** 2 + s02 ** 2) * 3) ** (1 / 2)
     
     print('progress: {: .2f}'.format(O.engines[3].progress),
-          ' p: {: .3f}'.format(mean_stress),
-          ' q: {: .3f}'.format(deviatoric_stress),
-          ' s02: {: .3f}'.format(s02),
-          ' e02: {: .3f}'.format(e02 * 100),  # ひずみは%表記
-          ' e22: {: .2f}'.format(e22 * 100))
+          ' p:{:>8.3f}'.format(mean_stress),
+          ' q:{:>8.3f}'.format(deviatoric_stress),
+          ' s02:{:>8.3f}'.format(s02),
+          ' e02:{:>6.3f}'.format(e02 * 100),  # ひずみは%表記
+          ' e22:{:>6.2f}'.format(e22 * 100))
     
     plot.addData(i = i,
                  s00 = s00,
@@ -300,11 +314,27 @@ def addPlotData():
                  e02 = e02)
     
     # 出力データを準備します
-    print(O.energy.energies.pyStr())
-    output_values = [i,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01] + O.energy.energies()
+    energy_dict = dict(O.energy.items())
+        
+    if not flag_header_done:
+        flag_header_done = True
+        
+        # エネルギー項を含めた出力ファイルのヘッダーを用意します。
+        key_list = "step,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01"
+        energy_dict = dict(O.energy.items())
+        for temp in list(energy_dict.keys()):
+            key_list += "," + temp
+        key_list += "\n"
+        with open(output_file_path, 'w') as f:
+            f.write(key_list)
+    
+    energy_values = list(energy_dict.values())
+    output_values = [i,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01] + energy_values
     output_values_str = ""
+    
     for temp in output_values:
         output_values_str += str(temp) + "," 
+        
     output_values_str = output_values_str[:-1] + "\n"
     with open(output_file_path, 'a') as f:
         f.write(output_values_str)
