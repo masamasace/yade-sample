@@ -4,8 +4,17 @@
 https://yade-dem.org/doc/yade.wrapper.html#yade.wrapper.Peri3dController
 
 # 基本的な内容
-Yadeには境界を制御するためのクラスが用意されているようです。このクラスにはいくつか種類があるのですが、今回はPeri3dControllerというものを使いたいと思います。
+Yadeには境界を制御するためのクラスが用意されているようです。
+このクラスにはいくつか種類があるのですが、今回はPeri3dControllerというものを使いたいと思います。
 
+# TODO あるいは要確認事項
+- 基本的な物性値が結果に与える影響、論文にある？
+    - 内部摩擦角、粒子単体のヤング率、接触モデルの各パラメータ
+    - 豊浦砂や珪砂といった実際の粒径加積曲線を用いる (yade._packSpheres.SpherePack.makeCloudの引数としてある)
+    - 粒子数
+- 等方圧密をしているのにせん断ひずみが出る
+- 重力堆積の方向が結果に与える影響
+- 重力堆積の際に毎回生成される際の粒子にばらつきを与える(Seed値をいじる)
 """
 
 from __future__ import print_function
@@ -21,36 +30,55 @@ import sys
 print("")
 print("-------------------------------------")
 
-############## 定数の定義 (単位は全てSI単位系(長さはm, 時間はsec, 質量はkg)) ##############
 
+############## 定数・変数の定義 (単位は全てSI単位系(長さはm, 時間はsec, 質量はkg)) ##############
+
+# 粒子と粒子間の接触モデルに関する定数・変数
 frictangle = 35 / 180 * np.pi           # (要検討)内部摩擦角、35度をラジアンに変換しています。
-density = 2650.0                        # 土粒子単体の密度 (kg/m3)です。
+density = 2650.0                        # 粒子単体の密度 (kg/m3)です。
 young = 3e8                             # (要検討)粒子単体のヤング率 (kPa)です。
+maxCorner_x = 6                         # 直方体の境界の一番上のx座標
+maxCorner_y = 6                         # 直方体の境界の一番上のy座標
+maxCorner_z = 2                         # 直方体の境界の一番上のz座標      
+rMean = 0.1                             # 粒子の平均粒径
+rRelFuzz = 0                            # 粒子の粒径の分散値
+particle_num = 50                     # 粒子数
+voidRatio = 0.5                         # 重力堆積終了後の目標間隙比(圧密終了後ではないことに注意)
+porosity = voidRatio / (1 + voidRatio)  # 空隙率(間隙比から計算)。
+print('\nTarget Porosity: {:.3f}'.format(porosity))
+
+# 載荷プロセス全体に関する定数・変数
+state_index = 0                         # 0:重力堆積、1:圧密、2:繰り返しせん断(Forward)、3:繰り返しせん断(Backward)の状態管理をするための変数です。
+gravity_vector = [0, -9.81, 0]          # 重力ベクトル(従来はz軸負の方向に作用させるが、粒子の異方性に与える影響が無視できない(要確認)ため、今回はy軸負の方向に作用させる)
+
+# 圧密に関する定数・変数
 consolidation_stress = 100e3            # 等方圧密時の目標鉛直応力です。：100kPa=100×10^3Pa
-cyclic_shear_stress_amplitude = 20e3    # 繰り返しせん断時の目標最大せん断応力振幅です。：20kPa
-cyclic_shear_strain_amplitude = 0.05    # 繰り返しせん断時の目標最大せん断ひずみ振幅です。：0.05→5%
-shear_stress_torrelance = 0.5e3         # (要修正)繰り返しせん断時のせん断振幅のばらつきです。：0.5kPa
-flag_cyclic_loading = False             # 繰り返しせん断を始めるかどうか(圧密が終了したかどうか)のフラグです。
-flag_cyclic_forward = True              # 繰り返しせん断の方向を決めるフラグです。
-flag_stress_threshold = False            # 繰り返しせん断時の反転を応力で定義するか、ひずみで定義するかを決めます。Trueが応力定義です。
+consolidation_nSteps = 2000             # 圧密時での最低限必要なステップ数です。
+consolidation_max_strain_rate = 5       # 圧密時での最大ひずみ速度です。
+
+# 繰り返しせん断に関する定数・変数
+flag_constant_pressure = False           # 繰り返しせん断時に定圧条件で行うか定体積条件で行うかを決めます。Trueが定圧条件です。
+flag_stress_threshold = True           # 繰り返しせん断時の反転を応力で定義するか、ひずみで定義するかを決めます。Trueが応力定義です。
+cyclic_loading_max_strain_rate = 0.005   # 繰り返しせん断時での最大ひずみ速度です。(反転条件がひずみの場合には後で更新されます。)
+cyclic_shear_stress_amplitude = 10e3    # 繰り返しせん断時の目標最大せん断応力振幅です。：20kPa
+cyclic_shear_strain_amplitude = 0.0005    # 繰り返しせん断時の目標最大せん断ひずみ振幅です。：0.05→5%
 target_num_cycle = 2                    # 目標の繰り返し回数です。
 current_num_cycle = 0                   # 現時点での繰り返し回数です。
-consolidation_nSteps = 1000             # 圧密時での最低限必要なステップ数です。
-cyclic_loading_nSteps = 2000            # 繰り返しせん断時での最低限必要なステップ数です。
-consolidation_max_strain_rate = 0.5     # 圧密時での最大ひずみ速度です。
-cyclic_loading_max_strain_rate = 0.05   # 圧密時での最大ひずみ速度です。(反転条件がひずみの場合には後で更新されます。)
-state_index = 0                         # 0:圧密、1:繰り返しせん断(Forward)、2:繰り返しせん断(Backward)の状態管理をするための変数です。
-flag_header_done = False                # アウトプットファイルにヘッダーが生成されたかどうかのフラグ
+cyclic_loading_nSteps = 10000            # 繰り返しせん断時での最低限必要なステップ数です。
+
+# 出力に関する定数・変数
+flag_header_done = False                # 出力ファイルにヘッダーが生成されたかどうかのフラグ
 
 # 結果を保存するためのファイルとフォルダを作成します。
-dt_now = datetime.datetime.now()
-print("Start simulation started at " + dt_now.strftime('%Y/%m/%d %H:%M:%S.%f'))
+dt_start = datetime.datetime.now()
+print("Start simulation started at " + dt_start.strftime('%Y/%m/%d %H:%M:%S.%f'))
 
 output_folder_path = Path(os.path.abspath(os.path.dirname(sys.argv[0]))).parent / "result"
 output_folder_path.mkdir(exist_ok=True)
-output_file_path = output_folder_path / (dt_now.strftime('%Y-%m-%d_%H-%M-%S') + "_output.csv")
+output_file_path = output_folder_path / (dt_start.strftime('%Y-%m-%d_%H-%M-%S') + "_output.csv")
 
-############## 接触モデルの定義 ##############
+
+############## 粒子と接触モデルの定義 ##############
 # 2つの粒子の間に働く力関係を計算するためのモデルを定義します。 
 # CohFrictMatクラスは粘着力を考慮できる材料のクラスです。
 mat_sp = CohFrictMat(alphaKr=0.5,
@@ -61,22 +89,27 @@ mat_sp = CohFrictMat(alphaKr=0.5,
                      density=density)
 O.materials.append(mat_sp)
 
-# 粒子をランダムに生成するコードです。粒子径、粒子径のばらつき、生成する範囲、生成した粒子の情報を格納しておく場所、シード値を入力します。
-sp = pack.randomPeriPack(radius=0.10, 
-                         rRelFuzz=0,
-                         initSize=Vector3(6, 6, 2),
-                         memoizeDb='/tmp/packDb.sqlite', 
-                         seed=-1)
+# 境界と粒子の生成
+O.periodic = True
+O.cell.setBox((maxCorner_x, maxCorner_y, maxCorner_z))
 
-# 上のコードで生成した粒子をOmegaインスタンスに渡します。ここで粒子の色付けを行うことができます。
-sp.toSimulation(color=(0, 0, 1))
+# 重力堆積の際に粒子を生成する領域
+# seed値は呼び出されるごとに変更するようにしたほうがいい
+spheres_set = pack.SpherePack().makeCloud(Vector3(0, maxCorner_y*0.8, 0),
+                                          Vector3(maxCorner_x, maxCorner_y, maxCorner_z),
+                                          rMean = rMean,
+                                          rRelFuzz = rRelFuzz,
+                                          num = particle_num,
+                                          periodic = True,
+                                          seed = 1)
+O.bodies.append(spheres_set)
 
 # 解析の際の時間ステップを決めるコードです。
 # MEMO: 本来であればすべての2粒子間接触から求まる固有周期の最小値を時間ステップとして採用するべきなんですが、初期状態では接触点の数が0の場合もあるので、近似的に粒子のP波速度の0.1倍を使っています。(Class Referenceと計算式が違うがほとんどのサンプルコードがこれぐらいの値を採用している...)
 O.dt = .1 * PWaveTimeStep()
 
-
-if not flag_stress_threshold:
+# 繰り返しせん断のときの最大ひずみ速度、どうやら定圧でひずみ反転条件の場合には、O.dt、cyclic_loading_nSteps、cyclic_shear_strain_amplitudeの3つから計算される値を用いたほうがよいらしい
+if not flag_stress_threshold and flag_constant_pressure:
     print("Strain Rate is updated! :" + '{:.4g}'.format(cyclic_loading_max_strain_rate), end="")
     cyclic_loading_max_strain_rate = cyclic_shear_strain_amplitude / (O.dt * cyclic_loading_nSteps)
     print(" -> " + '{:.4g}'.format(cyclic_loading_max_strain_rate))
@@ -122,35 +155,47 @@ Peri3D_iso = Peri3dController(
 
 # 繰り返しせん断の反転条件が応力の場合と、ひずみの場合でこの後のインスタンス生成時に代入するパラメータが変わってきます。
 # なのでここでif文を使って条件整理をします。
-if flag_stress_threshold:
-    goal_forward_temp = (-consolidation_stress,
-                         -consolidation_stress, 
-                         -consolidation_stress,
-                         0, cyclic_shear_stress_amplitude, 0)
-    goal_backward_temp = (-consolidation_stress,
-                          -consolidation_stress, 
-                          -consolidation_stress,
-                          0, -cyclic_shear_stress_amplitude, 0)
-    stressMask_temp = 0b111111
-    zxPath_temp = ((0.999999, 1),)
+if flag_constant_pressure:
+    if flag_stress_threshold:
+        goal_forward_temp = (-consolidation_stress,
+                            -consolidation_stress, 
+                            -consolidation_stress,
+                            0, cyclic_shear_stress_amplitude, 0)
+        goal_backward_temp = (-consolidation_stress,
+                            -consolidation_stress, 
+                            -consolidation_stress,
+                            0, -cyclic_shear_stress_amplitude, 0)
+        stressMask_temp = 0b111111
+    else:
+        goal_forward_temp = (-consolidation_stress,
+                            -consolidation_stress, 
+                            -consolidation_stress,
+                            0, cyclic_shear_strain_amplitude, 0)
+        goal_backward_temp = (-consolidation_stress,
+                            -consolidation_stress, 
+                            -consolidation_stress,
+                            0, -cyclic_shear_strain_amplitude, 0)
+        
+        # ここでstressMaskの説明をもう一回します。今回の場合の対応関係は以下のとおりです。
+        # goalの成分の順番と、逆になっている点に注意しましょう。
+        # stressMask = 0b    1    0    1    1    1    1
+        #                   01   02   12   22   11   00
+        # 0の場合はそのテンソルの目標値がひずみであること、1の場合は応力であることを表すので、
+        # 今回の場合は02成分(xz成分)のみが目標値がひずみであり、他の5成分は全て応力であることを示します。
+        stressMask_temp = 0b101111
 else:
-    goal_forward_temp = (-consolidation_stress,
-                         -consolidation_stress, 
-                         -consolidation_stress,
-                         0, cyclic_shear_strain_amplitude, 0)
-    goal_backward_temp = (-consolidation_stress,
-                          -consolidation_stress, 
-                          -consolidation_stress,
-                          0, -cyclic_shear_strain_amplitude, 0)
-    
-    # ここでstressMaskの説明をもう一回します。今回の場合の対応関係は以下のとおりです。
-    # stressMask = 0b    1    0    1    1    1    1
-    #                   01   02   12   22   11   00
-    # 0の場合はそのテンソルの目標値がひずみであること、1の場合は応力であることを表すので、
-    # 今回の場合は02成分(xz成分)のみが目標値がひずみであり、他の5成分は全て応力であることを示します。
-    stressMask_temp = 0b101111
+    # 定体積条件では圧密後のひずみ値を記録する必要があるので、goalの5番目の成分以外は暫定値です。
+    if flag_stress_threshold:
+        goal_forward_temp = (0, 0, 0, 0, cyclic_shear_stress_amplitude, 0)
+        goal_backward_temp = (0, 0, 0, 0, -cyclic_shear_stress_amplitude, 0)
+        stressMask_temp = 0b010000
+    else:
+        goal_forward_temp = (0, 0, 0, 0, cyclic_shear_strain_amplitude, 0)
+        goal_backward_temp = (0, 0, 0, 0, -cyclic_shear_strain_amplitude, 0)
+        stressMask_temp = 0b000000
 
 # 繰り返し載荷(せん断力を増やす際)の際の境界制御のクラスです。
+# xxPath = ((0, 1), (1, 1))の部分について。これがないと載荷初期段階の応力やひずみが0スタートになってしまい、挙動が不自然になります。
 Peri3D_cyclic_forward = Peri3dController(
     goal = goal_forward_temp,
     stressMask = stressMask_temp,
@@ -160,7 +205,6 @@ Peri3D_cyclic_forward = Peri3dController(
     xxPath = ((0, 1), (1, 1)),
     yyPath = ((0, 1), (1, 1)),
     zzPath = ((0, 1), (1, 1)),
-    # zxPath = ((0.999999, 1),)
 )
 
 # 繰り返し載荷(せん断力を減らす際際)の際の境界制御のクラスです。
@@ -173,7 +217,6 @@ Peri3D_cyclic_backward = Peri3dController(
     xxPath = ((0, 1), (1, 1)),
     yyPath = ((0, 1), (1, 1)),
     zzPath = ((0, 1), (1, 1)),
-    # zxPath = ((0.999999, 1),)
 )
 
 
@@ -191,42 +234,58 @@ O.engines = [
         [Law2_ScGeom6D_CohFrictPhys_CohesionMoment(
             always_use_moment_law=True), Law2_ScGeom_FrictPhys_CundallStrack()]
     ),
-    Peri3D_iso,
-    NewtonIntegrator(damping=0.2),
-    PyRunner(realPeriod=0.5, command="addPlotData()")
+    NewtonIntegrator(damping=0.2, gravity=gravity_vector),
+    PyRunner(iterPeriod=1, command="checkState()"),
+    # PyRunner(realPeriod=0.5, command="addPlotData()")
 ]
 
 # エネルギーを追跡します
 O.trackEnergy = True
 
-
-
 # 状態遷移用の関数です
 def checkState():
-    global state_index
+    global state_index, porosity
     global consolidation_stress, cyclic_shear_stress_amplitude
     global current_num_cycle, target_num_cycle
     
-    e00, e11, e22, e12, e02, e01 = O.engines[3].strain
-    s00, s11, s22, s12, s02, s01 = O.engines[3].stress
-    
+    # 重力堆積の状態確認をします。
     if state_index == 0:
+        print(unbalancedForce(), len(O.bodies), utils.porosity())
+        if (unbalancedForce() < 0.05 or unbalancedForce() == None) and utils.porosity() > porosity:
+            O.bodies.append(spheres_set)
+        O.pause()
+        
+    
+    elif state_index == 1:
+        e00, e11, e22, e12, e02, e01 = O.engines[3].strain
+        s00, s11, s22, s12, s02, s01 = O.engines[3].stress
+    
         print("Consolidation has finished! Now proceeding to cyclic loading")
         state_index += 1
+        print(len(O.bodies), utils.porosity())
         
         O.engines = O.engines[0:3] + [Peri3D_cyclic_forward] + O.engines[4:]
         O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
         O.engines[3].stress = (s00, s11, s22, s12, s02, s01)
         O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
         O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
+        
+        if not flag_constant_pressure:
+            if flag_stress_threshold:
+                O.engines[3].goal = (e00, e11, e22, e12, cyclic_shear_stress_amplitude, e01)
+            else:
+                O.engines[3].goal = (e00, e11, e22, e12, cyclic_shear_strain_amplitude, e01)
         O.engines[3].progress = 0
 
     else:
+        e00, e11, e22, e12, e02, e01 = O.engines[3].strain
+        s00, s11, s22, s12, s02, s01 = O.engines[3].stress
+        
         if (current_num_cycle > target_num_cycle):
             print("Cyclic loading has just finished!")
             finish_simulation()
             
-        elif (current_num_cycle <= target_num_cycle) and (state_index == 1):
+        elif (current_num_cycle <= target_num_cycle) and (state_index == 2):
             
             if flag_stress_threshold:
                 flag_under_torrelance = s02 > cyclic_shear_stress_amplitude
@@ -236,19 +295,24 @@ def checkState():
             if flag_under_torrelance:
                 print("Current Cycle: " + str(current_num_cycle), end="") 
                 
-                state_index = 2
+                state_index = 3
                 
                 O.engines = O.engines[0:3] + [Peri3D_cyclic_backward] + O.engines[4:]
                 O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
                 O.engines[3].stress = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
+                if not flag_constant_pressure:
+                    if flag_stress_threshold:
+                        O.engines[3].goal = (e00, e11, e22, e12, -cyclic_shear_stress_amplitude, e01)   
+                    else:
+                        O.engines[3].goal = (e00, e11, e22, e12, -cyclic_shear_strain_amplitude, e01)   
                 O.engines[3].progress = 0
         
                 current_num_cycle += 0.5
                 print(" Next Cycle: " + str(current_num_cycle)) 
 
-        elif (current_num_cycle <= target_num_cycle) and (state_index == 2):
+        elif (current_num_cycle <= target_num_cycle) and (state_index == 3):
                         
             if flag_stress_threshold:
                 flag_under_torrelance = s02 < -cyclic_shear_stress_amplitude
@@ -258,13 +322,18 @@ def checkState():
             if flag_under_torrelance: 
                 print("Current Cycle: " + str(current_num_cycle), end="") 
 
-                state_index = 1
+                state_index = 2
 
                 O.engines = O.engines[0:3] + [Peri3D_cyclic_forward] + O.engines[4:]
                 O.engines[3].strain = (e00, e11, e22, e12, e02, e01)
                 O.engines[3].stress = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressIdeal = (s00, s11, s22, s12, s02, s01)
                 O.engines[3].stressRate = (0, 0, 0, 0, 0, 0)
+                if not flag_constant_pressure:
+                    if flag_stress_threshold:
+                        O.engines[3].goal = (e00, e11, e22, e12, cyclic_shear_stress_amplitude, e01)
+                    else:
+                        O.engines[3].goal = (e00, e11, e22, e12, cyclic_shear_strain_amplitude, e01)
                 O.engines[3].progress = 0
                 
                 current_num_cycle += 0.5
@@ -308,8 +377,11 @@ def addPlotData():
           ' p:{:>8.3f}'.format(mean_stress),
           ' q:{:>8.3f}'.format(deviatoric_stress),
           ' s02:{:>8.3f}'.format(s02),
-          ' e02:{:>6.3f}'.format(e02 * 100),  # ひずみは%表記
+          ' s22:{:>8.2f}'.format(s22),
+          ' e02:{:>8.3f}'.format(e02 * 100),  # ひずみは%表記
           ' e22:{:>6.2f}'.format(e22 * 100))
+    
+    # print(O.engines[3].stressIdeal, O.engines[3].strainRate)
     
     plot.addData(i = i,
                  s00 = s00,
