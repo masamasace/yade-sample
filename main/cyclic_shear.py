@@ -94,7 +94,8 @@ O.periodic = True
 O.cell.setBox((maxCorner_x, maxCorner_y, maxCorner_z))
 
 # 重力堆積の際に粒子を生成する領域
-# seed値は呼び出されるごとに変更するようにしたほうがいい
+# TODO: seed値は呼び出されるごとに変更するようにしたほうがいい
+
 spheres_set = pack.SpherePack().makeCloud(Vector3(0, maxCorner_y*0.8, 0),
                                           Vector3(maxCorner_x, maxCorner_y, maxCorner_z),
                                           rMean = rMean,
