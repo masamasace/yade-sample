@@ -5,11 +5,8 @@
     - 豊浦砂や珪砂といった実際の粒径加積曲線を用いる (yade._packSpheres.SpherePack.makeCloudの引数としてある)
     - 粒子数
 - 等方圧密をしているのにせん断ひずみが出る
-- 重力堆積の方向が結果に与える影響
-- 重力堆積の際に毎回生成される際の粒子にばらつきを与える(Seed値をいじる)
 - より高速に圧密させるにはどうしたらよいのか
-    - Peri3D_iso_1をいじっても速度は対して大きくならない
-    - 境界を直接いじったほうが良い？O.cell.trsf?
+
 """
 
 from __future__ import print_function
@@ -35,7 +32,7 @@ frictangle = 35 / 180 * np.pi
 # 粒子の密度：単位体積あたりの質量を表す物性値です。この例では、kg/m^3の単位で表現されています。
 density = 2650.0
 
-# ヤング率：粒子単体の硬さを示す物性値です。この例では、kPaの単位で表現されています。
+# (要検討)ヤング率：粒子単体の硬さを示す物性値です。この例では、kPaの単位で表現されています。
 young = 3e8
 
 # 空間の各座標軸における直方体の境界の最大値です。
@@ -59,7 +56,7 @@ rRelFuzz = 0
 voidRatio = 0.75
 
 # 目標空隙率：粒子間の空隙の体積と全体の体積（粒子の体積＋空隙の体積）の比を示す値です。これは間隙比から計算されます。
-target_porosity = voidRatio / (1 + voidRatio)  
+target_porosity = voidRatio / (1 + voidRatio)
 print('\nTarget Porosity: {:.3f}'.format(target_porosity))
 
 
@@ -75,7 +72,7 @@ flag_import_pack_file = True
 # 圧密時の目標応力：等方的に圧密される際に達成したい応力の大きさを表す値です。単位はPaです。
 consolidation_stress = 100e3
 
-# 圧密時の最大ひずみ速度：粒子が圧密される際の最大のひずみ速度を表す値です。            
+# 圧密時の最大ひずみ速度：粒子が圧密される際の最大のひずみ速度を表す値です。
 consolidation_max_strain_rate = 4000
 
 # 速度勾配テンソル：圧密時の境界の速度の変化を表すテンソルです。
@@ -88,7 +85,7 @@ consolidation_velGrad = Matrix3(-consolidation_max_strain_rate, 0, 0,
 consolidation_thres_ratio = 0.99
 
 # 一回摩擦係数を落とした後何ステップ分放置するかを計算するための変数です。
-cur_iter = 0                            
+cur_iter = 0
 
 
 ### 繰り返しせん断に関する定数・変数 ###
@@ -103,23 +100,23 @@ cyclic_loading_velGrad_backward = Matrix3(0, 0, -cyclic_loading_max_strain_rate,
                                           0, 0, 0)
 
 # 繰り返しせん断時の目標最大せん断ひずみ振幅です。：0.05→5%
-cyclic_shear_strain_amplitude = 0.002 
-  
+cyclic_shear_strain_amplitude = 0.002
+
 # 繰り返しせん断時の目標最大せん断応力振幅です。：15kPa=15×10^3Pa
 cyclic_shear_stress_amplitude = 15e3
 
 # 目標の繰り返し回数です。
 target_num_cycle = 20
 
-# 現時点での繰り返し回数です。                   
-current_num_cycle = 0    
+# 現時点での繰り返し回数です。
+current_num_cycle = 0
 
-               
+
 ### 出力に関する定数・変数 ###
 flag_header_done = False                # 出力ファイルにヘッダーが生成されたかどうかのフラグ
 
 
-############## 結果を格納するためのフォルダ ##############
+############## 結果を格納するフォルダの確認と生成 ##############
 # 結果を保存するためのファイルとフォルダを作成します。
 dt_start = datetime.datetime.now()
 print("Start simulation started at " +
@@ -165,6 +162,7 @@ print('Current Porosity: {:.3f}'.format(utils.porosity()))
 # 解析の際の時間ステップを決めるコードです。
 O.dt = .1 * PWaveTimeStep()
 
+
 ############## エンジンの定義 ##############
 O.engines = [
     ForceResetter(),
@@ -187,8 +185,6 @@ O.trackEnergy = True
 O.cell.velGrad = consolidation_velGrad
 
 # 状態遷移用の関数です
-
-
 def checkState():
 
     # 最初に定義した変数の中で、シミュレーション中に変わるものをglobal変数として明示しておきます。
@@ -208,26 +204,36 @@ def checkState():
         O.cell.velGrad = consolidation_velGrad * \
             (1 - mean_stress / consolidation_stress)
 
-        #
+        # 平均主応力が所定の応力を超えた状態で次の状態に移行
+        # その際に粒子の内部摩擦角を0.9倍にして若干滑りやすい状態→密度が上昇しやすい状態にする
         if mean_stress >= consolidation_stress * consolidation_thres_ratio:
             state_index = 1
             setContactFriction(O.materials[0].frictionAngle * 0.9)
             cur_iter = O.iter
 
+
     # 圧密(密度調節)の場合の処理です。
     elif state_index == 1:
 
-        # 十分に拘束が高いときにはひずみ速度を低くしないと振動が発生してしまう
+        # 平均主応力によって速度勾配テンソルを変化させます。
         O.cell.velGrad = consolidation_velGrad * \
             (1 - mean_stress / consolidation_stress) * 0.1
+            
+        # 500ステップ回っていないと、次のステージに進むか現在のステージにとどまるかの判定ができないようにします。
         flag_consolidation_stabilize = (O.iter - cur_iter > 500)
-
+        
         if flag_consolidation_stabilize:
+            
+            # ここで3つの検証をします。
+            # flag_consolidation_stress：ここでは平均主応力が所定の応力を超えた状態かどうかをチェックしています。
+            # flag_consolidation_porosity：ここでは与えた間隙比(空隙率)よりも密になっているかどうかをチェックしています。
+            # flag_consolidation_force：準静的状態かどうかを見るために非平衡力を見ています。
             flag_consolidation_stress = mean_stress >= consolidation_stress * \
                 consolidation_thres_ratio
             flag_consolidation_porosity = utils.porosity() <= target_porosity
             flag_consolidation_force = utils.unbalancedForce() < 0.2
 
+            
             if flag_consolidation_stress and flag_consolidation_force:
 
                 if flag_consolidation_porosity:
