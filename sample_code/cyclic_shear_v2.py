@@ -107,7 +107,7 @@ target_num_cycle = 100
 current_num_cycle = 0
 
 # 目標の両振幅せん断ひずみです。：0.075→7.5%
-target_double_amplitude_shear_strain = 1
+target_double_amplitude_shear_strain = 0.5
 
 # 現時点での両振幅せん断歪です。
 current_double_amplitude_shear_strain = 0
@@ -127,6 +127,12 @@ output_iter_interval = 10
 # エネルギーのキーを保存しておくための変数です。
 temp_energy_keys = []
 
+# 後処理用のファイルを記録するかどうかのフラグです。
+flag_record_VTK = True
+
+# 後処理用のファイルを何ステップごとに記録するか
+record_VTK_interval = 100
+
 
 ############## 結果を格納するフォルダの確認と生成 ##############
 # 結果を保存するためのファイルとフォルダを作成します。
@@ -135,7 +141,7 @@ print("Start simulation started at " +
       dt_start.strftime('%Y/%m/%d %H:%M:%S.%f'))
 
 output_folder_path = Path(os.path.abspath(
-    os.path.dirname(sys.argv[0]))).parent / "result"
+    os.path.dirname(sys.argv[0]))).parent / "result" / dt_start.strftime('%Y-%m-%d_%H-%M-%S')
 output_folder_path.mkdir(exist_ok=True)
 output_file_path = output_folder_path / \
     (dt_start.strftime('%Y-%m-%d_%H-%M-%S') + "_output.csv")
@@ -176,19 +182,36 @@ O.dt = .1 * PWaveTimeStep()
 
 
 ############## エンジンの定義 ##############
-O.engines = [
-    ForceResetter(),
-    InsertionSortCollider(
-        [Bo1_Sphere_Aabb(), Bo1_Box_Aabb()]),
-    InteractionLoop(
-        [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom()],
-        [Ip2_FrictMat_FrictMat_FrictPhys()],
-        [Law2_ScGeom_FrictPhys_CundallStrack()]
-    ),
-    NewtonIntegrator(damping=0.2),
-    PyRunner(iterPeriod=10, command="checkState()"),
-    PyRunner(iterPeriod=output_iter_interval, command="addPlotData()")
-]
+
+if flag_record_VTK:
+    O.engines = [
+        ForceResetter(),
+        InsertionSortCollider(
+            [Bo1_Sphere_Aabb(), Bo1_Box_Aabb()]),
+        InteractionLoop(
+            [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom()],
+            [Ip2_FrictMat_FrictMat_FrictPhys()],
+            [Law2_ScGeom_FrictPhys_CundallStrack()]
+        ),
+        NewtonIntegrator(damping=0.2),
+        VTKRecorder(fileName=str(output_folder_path)+'/3d-vtk-', recorders=['all'], iterPeriod=record_VTK_interval),
+        PyRunner(iterPeriod=1, command="checkState()"),
+        PyRunner(iterPeriod=output_iter_interval, command="addPlotData()")
+    ]
+else:
+    O.engines = [
+        ForceResetter(),
+        InsertionSortCollider(
+            [Bo1_Sphere_Aabb(), Bo1_Box_Aabb()]),
+        InteractionLoop(
+            [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom()],
+            [Ip2_FrictMat_FrictMat_FrictPhys()],
+            [Law2_ScGeom_FrictPhys_CundallStrack()]
+        ),
+        NewtonIntegrator(damping=0.2),
+        PyRunner(iterPeriod=1, command="checkState()"),
+        PyRunner(iterPeriod=output_iter_interval, command="addPlotData()")
+    ]
 
 # エネルギーを計算するためのフラグを立てます。
 O.trackEnergy = True
