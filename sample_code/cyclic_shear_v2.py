@@ -1,14 +1,4 @@
-"""
-# TODO あるいは要確認事項
-- 基本的な物性値が結果に与える影響、論文にある？
-    - 内部摩擦角、粒子単体のヤング率、接触モデルの各パラメータ
-    - 豊浦砂や珪砂といった実際の粒径加積曲線を用いる (yade._packSpheres.SpherePack.makeCloudの引数としてある)
-    - 粒子数
-- 等方圧密をしているのにせん断ひずみが出る
-- より高速に圧密させるにはどうしたらよいのか
-
-"""
-
+############## 基本的なモジュールのインポート ##############
 from __future__ import print_function
 from yade import pack, plot
 from yade.gridpfacet import *
@@ -26,7 +16,7 @@ print("-------------------------------------")
 ############## 定数・変数の定義 (単位は全てSI単位系(長さはm, 時間はsec, 質量はkg)) ##############
 
 ### 粒子と粒子間の接触モデルに関する定数・変数 ###
-# (要検討)内部摩擦角：粒子と粒子の間の摩擦角度をラジアンで表現しています。この値は物性値として論文等で参照されるものです。
+# (要検討)摩擦角：粒子と粒子の間の摩擦角をラジアンで表現しています。この値は物性値として論文等で参照されるものです。
 frictangle = 35 / 180 * np.pi
 
 # 粒子の密度：単位体積あたりの質量を表す物性値です。この例では、kg/m^3の単位で表現されています。
@@ -62,13 +52,17 @@ print('\nTarget Porosity: {:.3f}'.format(target_porosity))
 
 ### 載荷プロセス全体に関する定数・変数 ###
 # 0:圧密、1:圧密(密度調整)、2:繰り返しせん断(Forward)、3:繰り返しせん断(Backward)の状態管理をするための変数です。
-state_index = 0
+stage_index = 0
 
 # 予め生成しておいた粒子の配置を記入したファイルを読み込むかどうかのフラグです
 flag_import_pack_file = True
 
 
 ### 圧密に関する定数・変数 ###
+# 圧密時の初期摩擦角：圧密時に意図的に内部摩擦角を落とすことによって、密な供試体を作成します。
+# もし一回目の圧密で所定の間隙比に到達しなかった場合には、少しずつ間隙比を下げていき再圧密を行います。。
+frictangle_consolidation = 25 / 180 * np.pi
+
 # 圧密時の目標応力：等方的に圧密される際に達成したい応力の大きさを表す値です。単位はPaです。
 consolidation_stress = 100e3
 
@@ -89,6 +83,7 @@ cur_iter = 0
 
 
 ### 繰り返しせん断に関する定数・変数 ###
+
 # 繰り返しせん断時の反転を応力で定義するか、ひずみで定義するかを決めます。Trueがひずみ定義です。
 flag_strain_reversal = False
 cyclic_loading_max_strain_rate = 20    # 繰り返しせん断時での最大ひずみ速度です。
@@ -106,14 +101,31 @@ cyclic_shear_strain_amplitude = 0.002
 cyclic_shear_stress_amplitude = 15e3
 
 # 目標の繰り返し回数です。
-target_num_cycle = 20
+target_num_cycle = 100
 
 # 現時点での繰り返し回数です。
 current_num_cycle = 0
 
+# 目標の両振幅せん断ひずみです。：0.075→7.5%
+target_double_amplitude_shear_strain = 1
+
+# 現時点での両振幅せん断歪です。
+current_double_amplitude_shear_strain = 0
+
+# 反転時のせん断ひずみを保存しておくための変数です。
+prev_shear_strain = 0
+
 
 ### 出力に関する定数・変数 ###
-flag_header_done = False                # 出力ファイルにヘッダーが生成されたかどうかのフラグ
+
+# 出力ファイルにヘッダーが生成されたかどうかのフラグ
+flag_header_done = False
+
+# 出力ファイルを出力する間隔
+output_iter_interval = 10
+
+# エネルギーのキーを保存しておくための変数です。
+temp_energy_keys = []
 
 
 ############## 結果を格納するフォルダの確認と生成 ##############
@@ -157,7 +169,7 @@ else:
 
 # 上のコードで生成した粒子をOmegaインスタンスに渡します。
 pack_sp.toSimulation()
-print('Current Porosity: {:.3f}'.format(utils.porosity()))
+print('Number of Particles: ' + str(len(O.bodies)) +', Current Porosity: {:.3f}'.format(utils.porosity()))
 
 # 解析の際の時間ステップを決めるコードです。
 O.dt = .1 * PWaveTimeStep()
@@ -175,7 +187,7 @@ O.engines = [
     ),
     NewtonIntegrator(damping=0.2),
     PyRunner(iterPeriod=10, command="checkState()"),
-    PyRunner(realPeriod=0.5, command="addPlotData()")
+    PyRunner(iterPeriod=output_iter_interval, command="addPlotData()")
 ]
 
 # エネルギーを計算するためのフラグを立てます。
@@ -188,7 +200,7 @@ O.cell.velGrad = consolidation_velGrad
 def checkState():
 
     # 最初に定義した変数の中で、シミュレーション中に変わるものをglobal変数として明示しておきます。
-    global state_index, current_num_cycle, cur_iter
+    global stage_index, current_num_cycle, cur_iter
 
     # 応力とひずみに関するパラメータを取得します。
     [s00, s01, s02], [_, s11, s12], [_, _, s22] = getStress()
@@ -198,7 +210,7 @@ def checkState():
     mean_stress = -(s00 + s11 + s22) / 3
 
     # 圧密の場合の処理です。
-    if state_index == 0:
+    if stage_index == 0:
 
         # 平均主応力によって速度勾配テンソルを変化させます。
         O.cell.velGrad = consolidation_velGrad * \
@@ -207,23 +219,24 @@ def checkState():
         # 平均主応力が所定の応力を超えた状態で次の状態に移行
         # その際に粒子の内部摩擦角を0.9倍にして若干滑りやすい状態→密度が上昇しやすい状態にする
         if mean_stress >= consolidation_stress * consolidation_thres_ratio:
-            state_index = 1
+            stage_index = 1
             setContactFriction(O.materials[0].frictionAngle * 0.9)
             cur_iter = O.iter
+            addPlotData()
 
 
     # 圧密(密度調節)の場合の処理です。
-    elif state_index == 1:
+    elif stage_index == 1:
 
         # 平均主応力によって速度勾配テンソルを変化させます。
         O.cell.velGrad = consolidation_velGrad * \
             (1 - mean_stress / consolidation_stress) * 0.1
-            
+
         # 500ステップ回っていないと、次のステージに進むか現在のステージにとどまるかの判定ができないようにします。
         flag_consolidation_stabilize = (O.iter - cur_iter > 500)
-        
+
         if flag_consolidation_stabilize:
-            
+
             # ここで3つの検証をします。
             # flag_consolidation_stress：ここでは平均主応力が所定の応力を超えた状態かどうかをチェックしています。
             # flag_consolidation_porosity：ここでは与えた間隙比(空隙率)よりも密になっているかどうかをチェックしています。
@@ -233,7 +246,7 @@ def checkState():
             flag_consolidation_porosity = utils.porosity() <= target_porosity
             flag_consolidation_force = utils.unbalancedForce() < 0.2
 
-            
+
             if flag_consolidation_stress and flag_consolidation_force:
 
                 if flag_consolidation_porosity:
@@ -241,18 +254,24 @@ def checkState():
                         "Consolidation has finished! Now proceeding to cyclic forward loading")
                     print('Current Porosity: {:.3f}'.format(utils.porosity()))
 
-                    state_index = 2
+                    stage_index = 2
 
                     setContactFriction(frictangle)
                     O.cell.velGrad = cyclic_loading_velGrad_forward
+                    prev_shear_strain = e02
+
+                    addPlotData()
 
                 else:
                     setContactFriction(O.materials[0].frictionAngle * 0.9)
                     cur_iter = O.iter
 
-    elif state_index == 2:
+    elif stage_index == 2:
 
-        if current_num_cycle > target_num_cycle:
+        if current_double_amplitude_shear_strain < abs(e02 -  prev_shear_strain):
+            current_double_amplitude_shear_strain = abs(e02 -  prev_shear_strain)
+
+        if current_num_cycle > target_num_cycle or current_double_amplitude_shear_strain > target_double_amplitude_shear_strain:
             print("Cyclic loading has just finished!")
             finish_simulation()
 
@@ -265,15 +284,20 @@ def checkState():
             if flag_reversal:
                 print("Current Cycle: " + str(current_num_cycle), end="")
 
-                state_index = 3
+                stage_index = 3
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_backward
 
                 print(" Next Backward Cycle: " + str(current_num_cycle))
 
-    elif state_index == 3:
+                addPlotData()
 
-        if current_num_cycle > target_num_cycle:
+    elif stage_index == 3:
+
+        if current_double_amplitude_shear_strain < abs(e02 -  prev_shear_strain):
+            current_double_amplitude_shear_strain = abs(e02 -  prev_shear_strain)
+
+        if current_num_cycle > target_num_cycle or current_double_amplitude_shear_strain > target_double_amplitude_shear_strain:
             print("Cyclic loading has just finished!")
             finish_simulation()
 
@@ -286,44 +310,42 @@ def checkState():
             if flag_reversal:
                 print("Current Cycle: " + str(current_num_cycle), end="")
 
-                state_index = 2
+                stage_index = 2
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_forward
 
                 print(" Next Forward Cycle: " + str(current_num_cycle))
 
+                addPlotData()
+
 
 # 載荷が終了した際に呼ばれる関数です。
 def finish_simulation():
+    addPlotData()
+
     O.pause()
-
-    # エネルギーの項が全て入っていない場合があるため、もう一度ファイルを読み込んでヘッダーだけ修正します。
-    with open(output_file_path, 'r') as f:
-        lines = f.readlines()
-
-    key_list = "step,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01"
-    energy_dict = dict(O.energy.items())
-    for temp in list(energy_dict.keys()):
-        key_list += "," + temp
-    key_list += "\n"
-
-    lines[0] = key_list
-
-    with open(output_file_path, 'w') as f:
-        f.writelines(lines)
 
 
 # 図化のための関数です。
 def addPlotData():
-    global flag_header_done, state_index
+    global flag_header_done, stage_index, current_num_cycle, temp_energy_keys
 
     i = O.iter
     [s00, s01, s02], [_, s11, s12], [_, _, s22] = getStress() / \
-        1000  # こちらだけkPaに変換する
+        1000  # addPlotData()だけkPaに変換する
     [e00, e01, e02], [_, e11, e12], [_, _, e22] = O.cell.trsf
     e00 = 1 - e00
     e11 = 1 - e11
     e22 = 1 - e22
+
+    temp_porosity = utils.porosity()
+    temp_void_ratio = temp_porosity / (1 - temp_porosity)
+    temp_unbalanced_force = utils.unbalancedForce()
+    temp_friction_angle = O.materials[0].frictionAngle
+    temp_coord_num = utils.avgNumInteractions()
+    
+    print(utils.fabricTensor())
+    [f00, f01, f02], [f10, f11, f12], [f20, f21, f22] = utils.fabricTensor()[0]
 
     # 平均応力 (圧縮が正に変換)
     mean_stress = -(s00 + s11 + s22) / 3
@@ -331,19 +353,18 @@ def addPlotData():
     deviatoric_stress = ((((s00 - s11) ** 2 + (s11 - s22) ** 2 + (s22 - s00)
                          ** 2) / 6 + s01 ** 2 + s12 ** 2 + s02 ** 2) * 3) ** (1 / 2)
 
-    print('prog: ' + str(state_index) + ' - {:07}'.format(i),
+    print('prog: ' + str(stage_index) + ' - {:07}'.format(i),
           ' p:{:>7.2f}'.format(mean_stress),
           ' q:{:>7.2f}'.format(deviatoric_stress),
           ' s02:{:>7.2f}'.format(s02),
           ' s22:{:>7.2f}'.format(s22),
           ' e02:{:>10.6f}'.format(e02),
           ' e22:{:>7.3f}'.format(e22),
-          ' poro:{:> 7.4f}'.format(utils.porosity()),
-          ' UnF:{:> 5.2f}'.format(utils.unbalancedForce()),
-          ' FricAng:{:> 6.3f}'.format(O.materials[0].frictionAngle)
+          ' poro:{:> 7.4f}'.format(temp_porosity),
+          ' UnF:{:> 5.2f}'.format(temp_unbalanced_force),
+          ' FricAng:{:> 6.3f}'.format(temp_friction_angle)
           )
 
-    # print(O.engines[3].stressIdeal, O.engines[3].strainRate)
 
     plot.addData(i=i,
                  s00=s00,
@@ -356,21 +377,12 @@ def addPlotData():
     # 出力データを準備します
     energy_dict = dict(O.energy.items())
 
-    if not flag_header_done:
-        flag_header_done = True
-
-        # エネルギー項を含めた出力ファイルのヘッダーを用意します。
-        key_list = "step,s00,s11,s22,s12,s02,s01,e00,e11,e22,e12,e02,e01"
-        energy_dict = dict(O.energy.items())
-        for temp in list(energy_dict.keys()):
-            key_list += "," + temp
-        key_list += "\n"
-        with open(output_file_path, 'w') as f:
-            f.write(key_list)
-
     energy_values = list(energy_dict.values())
-    output_values = [i, s00, s11, s22, s12, s02, s01,
-                     e00, e11, e22, e12, e02, e01] + energy_values
+    output_values = [i, O.time, stage_index, temp_void_ratio,
+                     temp_unbalanced_force, temp_friction_angle, temp_coord_num,
+                     s00, s11, s22, s12, s02, s01,
+                     e00, e11, e22, e12, e02, e01, 
+                     f00, f01, f02, f10, f11, f12, f20, f21, f22] + energy_values
     output_values_str = ""
 
     for temp in output_values:
@@ -380,10 +392,23 @@ def addPlotData():
     with open(output_file_path, 'a') as f:
         f.write(output_values_str)
 
-    """
-    for temp_body in O.bodies:
-        temp_body.shape.color = scalarOnColorScale(temp_body.state.refPos.norm(), 0, e02)
-    """
+    if not flag_header_done or len(temp_energy_keys) < len(list(energy_dict.keys())):
+        temp_energy_keys = list(energy_dict.keys())
+
+        with open(output_file_path, 'r') as f:
+            lines = f.readlines()
+
+        key_list = "step,time(s),stage,void_ratio,unbalanced_force(N),friction_angle(rad),coordination_number,s00(kPa),s11(kPa),s22(kPa),s12(kPa),s02(kPa),s01(kPa),e00,e11,e22,e12,e02,e01,f00,f01,f02,f10,f11,f12,f20, f21,f22"
+
+        energy_dict = dict(O.energy.items())
+        for temp in list(energy_dict.keys()):
+            key_list += "," + temp + "(N⋅m)"
+        key_list += "\n"
+
+        lines[0] = key_list
+
+        with open(output_file_path, 'w') as f:
+            f.writelines(lines)
 
 
 plot.plots = {"i": ("s00", "s22", "s02"),
