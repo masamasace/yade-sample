@@ -200,7 +200,7 @@ O.cell.velGrad = consolidation_velGrad
 def checkState():
 
     # 最初に定義した変数の中で、シミュレーション中に変わるものをglobal変数として明示しておきます。
-    global stage_index, current_num_cycle, cur_iter
+    global stage_index, current_num_cycle, cur_iter, prev_shear_strain, current_double_amplitude_shear_strain
 
     # 応力とひずみに関するパラメータを取得します。
     [s00, s01, s02], [_, s11, s12], [_, _, s22] = getStress()
@@ -344,7 +344,6 @@ def addPlotData():
     temp_friction_angle = O.materials[0].frictionAngle
     temp_coord_num = utils.avgNumInteractions()
     
-    print(utils.fabricTensor())
     [f00, f01, f02], [f10, f11, f12], [f20, f21, f22] = utils.fabricTensor()[0]
 
     # 平均応力 (圧縮が正に変換)
