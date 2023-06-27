@@ -131,7 +131,7 @@ temp_energy_keys = []
 flag_record_VTK = True
 
 # 後処理用のファイルを何ステップごとに記録するか
-record_VTK_interval = 100
+record_VTK_interval = 500
 
 
 ############## 結果を格納するフォルダの確認と生成 ##############
@@ -400,7 +400,7 @@ def addPlotData():
     energy_dict = dict(O.energy.items())
 
     energy_values = list(energy_dict.values())
-    output_values = [i, O.time, stage_index, temp_void_ratio,
+    output_values = [i, O.time, stage_index, current_num_cycle, temp_void_ratio,
                      temp_unbalanced_force, temp_friction_angle, temp_coord_num,
                      s00, s11, s22, s12, s02, s01,
                      e00, e11, e22, e12, e02, e01, 
@@ -420,7 +420,7 @@ def addPlotData():
         with open(output_file_path, 'r') as f:
             lines = f.readlines()
 
-        key_list = "step,time(s),stage,void_ratio,unbalanced_force(N),friction_angle(rad),coordination_number,s00(kPa),s11(kPa),s22(kPa),s12(kPa),s02(kPa),s01(kPa),e00,e11,e22,e12,e02,e01,f00,f01,f02,f10,f11,f12,f20, f21,f22"
+        key_list = "step,time(s),stage,number_of_cyclic,void_ratio,unbalanced_force(N),friction_angle(rad),coordination_number,s00(kPa),s11(kPa),s22(kPa),s12(kPa),s02(kPa),s01(kPa),e00,e11,e22,e12,e02,e01,f00,f01,f02,f10,f11,f12,f20, f21,f22"
 
         energy_dict = dict(O.energy.items())
         for temp in list(energy_dict.keys()):
