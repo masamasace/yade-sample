@@ -310,6 +310,7 @@ def checkState():
                 stage_index = 3
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_backward
+                prev_shear_strain = e02
 
                 print(" Next Backward Cycle: " + str(current_num_cycle))
 
@@ -336,6 +337,7 @@ def checkState():
                 stage_index = 2
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_forward
+                prev_shear_strain = e02
 
                 print(" Next Forward Cycle: " + str(current_num_cycle))
 
