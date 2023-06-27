@@ -351,7 +351,7 @@ def finish_simulation():
 
 # 図化のための関数です。
 def addPlotData():
-    global flag_header_done, stage_index, current_num_cycle, temp_energy_keys
+    global flag_header_done, stage_index, current_num_cycle, current_double_amplitude_shear_strain, temp_energy_keys
 
     i = O.iter
     [s00, s01, s02], [_, s11, s12], [_, _, s22] = getStress() / \
@@ -402,6 +402,7 @@ def addPlotData():
     energy_values = list(energy_dict.values())
     output_values = [i, O.time, stage_index, current_num_cycle, temp_void_ratio,
                      temp_unbalanced_force, temp_friction_angle, temp_coord_num,
+                     current_double_amplitude_shear_strain, 
                      s00, s11, s22, s12, s02, s01,
                      e00, e11, e22, e12, e02, e01, 
                      f00, f01, f02, f10, f11, f12, f20, f21, f22] + energy_values
@@ -420,7 +421,7 @@ def addPlotData():
         with open(output_file_path, 'r') as f:
             lines = f.readlines()
 
-        key_list = "step,time(s),stage,number_of_cyclic,void_ratio,unbalanced_force(N),friction_angle(rad),coordination_number,s00(kPa),s11(kPa),s22(kPa),s12(kPa),s02(kPa),s01(kPa),e00,e11,e22,e12,e02,e01,f00,f01,f02,f10,f11,f12,f20, f21,f22"
+        key_list = "step,time(s),stage,number_of_cyclic,void_ratio,unbalanced_force(N),friction_angle(rad),coordination_number,DA,s00(kPa),s11(kPa),s22(kPa),s12(kPa),s02(kPa),s01(kPa),e00,e11,e22,e12,e02,e01,f00,f01,f02,f10,f11,f12,f20, f21,f22"
 
         energy_dict = dict(O.energy.items())
         for temp in list(energy_dict.keys()):
