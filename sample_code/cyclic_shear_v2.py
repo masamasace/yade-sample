@@ -25,12 +25,12 @@ initial_parameters = {
     "sphere_radius_variance" : 0,
     "flag_import_existing_pack_file" : True,
     "contact_young_modulus" : 3e8,
-    "contact_poisson_ratio" : 3e8,
+    "contact_poisson_ratio" : 0.33,
     "contact_friction_angle" : np.radians(35),
     "contact_friction_angle_decrement_ratio_consolidation" : 0.9,
     "consolidation_void_ratio_target" : 0.750,
     "consolidation_stress" : 100e3,
-    "consolidation_max_strain_rate" : 400,
+    "consolidation_max_strain_rate" : 4000,
     "consolidation_thres_ratio" : 0.99,
     "flag_strain_reversal" : False,
     "cyclic_loading_max_strain_rate" : 20,
@@ -61,6 +61,7 @@ consolidation_velGrad = Matrix3(-initial_parameters["consolidation_max_strain_ra
 # 一回摩擦係数を落とした後何ステップ分放置するかを計算するための変数です。
 val_iter_after_kn_drop = 0
 
+# 繰り返し載荷用の速度勾配テンソルです
 cyclic_loading_velGrad_forward = Matrix3(0, initial_parameters["cyclic_loading_max_strain_rate"], 0,
                                          0, 0, 0,
                                          0, 0, 0)
@@ -75,10 +76,13 @@ current_num_cycle = 0
 current_double_amplitude_shear_strain = 0
 
 # 反転時のせん断ひずみを保存しておくための変数です。
-prev_shear_strain = 0
+prev_shear_strain_reversal = 0
+
+# 0クロスを判定するためのFIFOキューです
+prev_shear_strain_iter = np.zeros(5)
 
 # 0クロスを判定するためのフラグです
-flag_zero_closs = False
+flag_zero_closs_potensial = False
 
 
 ### 出力に関する定数・変数 ###
@@ -186,7 +190,7 @@ vtk_recorder = VTKRecorder(fileName=str(output_folder_path)+'/vtk-', recorders=[
 def checkState():
 
     # 最初に定義した変数の中で、シミュレーション中に変わるものをglobal変数として明示しておきます。
-    global stage_index, current_num_cycle, val_iter_after_kn_drop, prev_shear_strain, current_double_amplitude_shear_strain, flag_zero_closs, input_work_per_volume
+    global stage_index, current_num_cycle, val_iter_after_kn_drop, prev_shear_strain_reversal, current_double_amplitude_shear_strain, flag_zero_closs_potensial, input_work_per_volume, prev_shear_strain_iter
 
     # 応力とひずみに関するパラメータを取得します。
     [s00, s01, s02], [_, s11, s12], [_, _, s22] = getStress()
@@ -197,6 +201,10 @@ def checkState():
 
     # 平均主応力を計算します。
     mean_stress = -(s00 + s11 + s22) / 3
+    
+    # せん断ひずみを記憶しておきます。
+    prev_shear_strain_iter[:-1] = prev_shear_strain_iter[1:]
+    prev_shear_strain_iter[-1] = e01
     
     # 圧密の場合の処理です。
     if stage_index == 0:
@@ -212,8 +220,7 @@ def checkState():
             setContactFriction(O.materials[0].frictionAngle * initial_parameters["contact_friction_angle_decrement_ratio_consolidation"])
             val_iter_after_kn_drop = O.iter
             
-            if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
-                exportData(flag_unique=True)
+            exportData(flag_unique=True)
 
 
     # 圧密(密度調節)の場合の処理です。
@@ -249,10 +256,10 @@ def checkState():
 
                     setContactFriction(initial_parameters["contact_friction_angle"])
                     O.cell.velGrad = cyclic_loading_velGrad_forward
-                    prev_shear_strain = e01
+                    prev_shear_strain_reversal = e01
+                    flag_zero_closs_potensial = True
 
-                    if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
-                        exportData(flag_unique=True)
+                    exportData(flag_unique=True)
 
                 else:
                     setContactFriction(O.materials[0].frictionAngle * initial_parameters["contact_friction_angle_decrement_ratio_consolidation"])
@@ -260,8 +267,8 @@ def checkState():
 
     elif stage_index == 2:
 
-        if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain):
-            current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain)
+        if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain_reversal):
+            current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain_reversal)
 
         if current_num_cycle > initial_parameters["cyclic_shear_num_cycle_target"] or current_double_amplitude_shear_strain > initial_parameters["cyclic_shear_double_amplitude_target"]:
             print("Cyclic loading has just finished!")
@@ -279,25 +286,22 @@ def checkState():
                 stage_index = 3
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_backward
-                prev_shear_strain = e01
+                prev_shear_strain_reversal = e01
+                flag_zero_closs_potensial = True
 
                 print(" Next Backward Cycle: " + str(current_num_cycle))
                 
-                if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
-                    exportData(flag_unique=True)
+                exportData(flag_unique=True)
             else:
-                flag_zero_closs = flag_zero_closs ^ (prev_shear_strain * e01 <= 0)
-                
-                if flag_zero_closs:
-                    if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
+                if flag_zero_closs_potensial:
+                    if prev_shear_strain_iter.mean() * e01 < 0:
                         exportData(flag_unique=True)
-                        
-                    flag_zero_closs = False
+                        flag_zero_closs_potensial = False
 
     elif stage_index == 3:
 
-        if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain):
-            current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain)
+        if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain_reversal):
+            current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain_reversal)
 
         if current_num_cycle > initial_parameters["cyclic_shear_num_cycle_target"] or current_double_amplitude_shear_strain > initial_parameters["cyclic_shear_double_amplitude_target"]:
             print("Cyclic loading has just finished!")
@@ -315,20 +319,17 @@ def checkState():
                 stage_index = 2
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_forward
-                prev_shear_strain = e01
+                prev_shear_strain_reversal = e01
+                flag_zero_closs_potensial = True
 
                 print(" Next Forward Cycle: " + str(current_num_cycle))
                 
-                if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
-                    exportData(flag_unique=True)
+                exportData(flag_unique=True)
             else:
-                flag_zero_closs = flag_zero_closs ^ (prev_shear_strain * e01 <= 0)
-                
-                if flag_zero_closs:
-                    if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
+                if flag_zero_closs_potensial:
+                    if prev_shear_strain_iter.mean() * e01 < 0:
                         exportData(flag_unique=True)
-                        
-                    flag_zero_closs = False
+                        flag_zero_closs_potensial = False
 
 
 # 載荷が終了した際に呼ばれる関数です。
@@ -358,6 +359,7 @@ def exportData(flag_unique=False):
     e00 = 1 - e00
     e11 = 1 - e11
     e22 = 1 - e22
+    ev = e00 + e11 + e22
 
     temp_porosity = utils.porosity()
     temp_void_ratio = temp_porosity / (1 - temp_porosity)
@@ -365,22 +367,18 @@ def exportData(flag_unique=False):
     temp_friction_angle = O.materials[0].frictionAngle
     temp_coord_num = utils.avgNumInteractions()
     temp_flag_unique = int(flag_unique)
-
-
+    
     # 平均応力 (圧縮が正に変換)
     mean_stress = (s00 + s11 + s22) / 3
-    # ミーゼスの相当応力(偏差応力テンソルの第2次不変量J2の平方根を√3倍したもの)
-    deviatoric_stress = ((((s00 - s11) ** 2 + (s11 - s22) ** 2 + (s22 - s00)
-                         ** 2) / 6 + s01 ** 2 + s12 ** 2 + s02 ** 2) * 3) ** (1 / 2)
 
-    print('prog: ' + str(stage_index) + ' - {:07}'.format(i),
+    print('prog: ' + str(stage_index) + ' - {:08}'.format(i),
+          ' Nc:{:>5.1f}'.format(current_num_cycle),
+          ' DA:{:>9.6f}'.format(current_double_amplitude_shear_strain), 
           ' p:{:>7.2f}'.format(mean_stress),
-          ' q:{:>7.2f}'.format(deviatoric_stress),
           ' s01:{:>7.2f}'.format(s01),
-          ' s22:{:>7.2f}'.format(s22),
           ' e01:{:>10.6f}'.format(e01),
-          ' e22:{:>7.3f}'.format(e22),
-          ' poro:{:> 7.4f}'.format(temp_porosity),
+          ' ev:{:>10.6f}'.format(ev),
+          ' VoidR:{:> 7.4f}'.format(temp_void_ratio) + ' /{:> 5.4f}'.format(initial_parameters["consolidation_void_ratio_target"]),
           ' UnF:{:> 5.2f}'.format(temp_unbalanced_force),
           ' FricAng:{:> 6.3f}'.format(temp_friction_angle)
           )
