@@ -7,107 +7,69 @@ import datetime
 from pathlib import Path
 import os
 import sys
+import json
 
 # ターミナルの出力が詰まっていて見づらいための区切り線
 print("")
 print("-------------------------------------")
 
 
-############## 定数・変数の定義 (単位は全てSI単位系(長さはm, 時間はsec, 質量はkg)) ##############
+############## 定数の定義 (単位は全てSI単位系(長さはm, 時間はsec, 質量はkg)) ##############
 
-### 粒子と粒子間の接触モデルに関する定数・変数 ###
-# (要検討)摩擦角：粒子と粒子の間の摩擦角をラジアンで表現しています。この値は物性値として論文等で参照されるものです。
-frictangle = 35 / 180 * np.pi
+initial_parameters = {
+    "cell_coord_max_x" : 0.075,
+    "cell_coord_max_y" : 0.075,
+    "cell_coord_max_z" : 0.025,
+    "sphere_density" : 2650.0,
+    "sphere_radius_mean" : 0.001,
+    "sphere_radius_variance" : 0,
+    "flag_import_existing_pack_file" : True,
+    "contact_young_modulus" : 3e8,
+    "contact_poisson_ratio" : 3e8,
+    "contact_friction_angle" : np.radians(35),
+    "contact_friction_angle_decrement_ratio_consolidation" : 0.9,
+    "consolidation_void_ratio_target" : 0.750,
+    "consolidation_stress" : 100e3,
+    "consolidation_max_strain_rate" : 400,
+    "consolidation_thres_ratio" : 0.99,
+    "flag_strain_reversal" : False,
+    "cyclic_loading_max_strain_rate" : 20,
+    "cyclic_shear_strain_amplitude" : 0.002,
+    "cyclic_shear_stress_amplitude" : 15e3,
+    "cyclic_shear_num_cycle_target" : 100,
+    "cyclic_shear_double_amplitude_target" : 0.5,
+    "output_txt_iter_interval" : 10,
+    "flag_output_VTK" : True,
+    "output_VTK_iter_interval" : 100
+}
 
-# 粒子の密度：単位体積あたりの質量を表す物性値です。この例では、kg/m^3の単位で表現されています。
-density = 2650.0
-
-# (要検討)ヤング率：粒子単体の硬さを示す物性値です。この例では、kPaの単位で表現されています。
-young = 3e8
-
-# 空間の各座標軸における直方体の境界の最大値です。
-maxCorner_x = 0.075
-maxCorner_y = 0.075
-maxCorner_z = 0.025
-
-# ポアソン比：粒子単体が応力を受けたときに、応力の方向に対して垂直な方向に起こるひずみと、応力の方向に沿ったひずみの比率を表す物性値です。
-# 連続体力学で定義されるようなマクロなポアソン比ではありません。
-poisson = 0.33
-
-# 平均粒径：粒子の平均的な大きさを示すパラメータです。この値が大きいほど、粒子の大きさは大きくなります。
-rMean = 0.001
-
-# 粒径の分散：粒子の大きさのばらつきを示すパラメータです。この値が大きいほど、粒子の大きさは均一でなくなります。
-# 0とすると粒径は全て同じになります。
-rRelFuzz = 0
-
-# 間隙比：粒子間の空隙の体積と粒子の体積の比を示す値です。この値が大きいほど、粒子間の空隙が多くなります。
-# 圧密(密度調整)のステージが終了した後の目標間隙比ですが、2023/06/22時点では厳密に同じ間隙比にはなりません。
-voidRatio = 0.750
+### 中間定数・仮変数の定義 ###
 
 # 目標空隙率：粒子間の空隙の体積と全体の体積（粒子の体積＋空隙の体積）の比を示す値です。これは間隙比から計算されます。
-target_porosity = voidRatio / (1 + voidRatio)
+target_porosity = initial_parameters["consolidation_void_ratio_target"] / (1 + initial_parameters["consolidation_void_ratio_target"])
 print('\nTarget Porosity: {:.3f}'.format(target_porosity))
 
-
-### 載荷プロセス全体に関する定数・変数 ###
 # 0:圧密、1:圧密(密度調整)、2:繰り返しせん断(Forward)、3:繰り返しせん断(Backward)の状態管理をするための変数です。
 stage_index = 0
 
-# 予め生成しておいた粒子の配置を記入したファイルを読み込むかどうかのフラグです
-flag_import_pack_file = True
-
-
-### 圧密に関する定数・変数 ###
-# 圧密時の初期摩擦角：圧密時に意図的に内部摩擦角を落とすことによって、密な供試体を作成します。
-# もし一回目の圧密で所定の間隙比に到達しなかった場合には、少しずつ間隙比を下げていき再圧密を行います。。
-frictangle_consolidation = 25 / 180 * np.pi
-
-# 圧密時の目標応力：等方的に圧密される際に達成したい応力の大きさを表す値です。単位はPaです。
-consolidation_stress = 100e3
-
-# 圧密時の最大ひずみ速度：粒子が圧密される際の最大のひずみ速度を表す値です。
-consolidation_max_strain_rate = 4000
-
 # 速度勾配テンソル：圧密時の境界の速度の変化を表すテンソルです。
 # この値が大きいほど、境界の位置は急速に変化します。
-consolidation_velGrad = Matrix3(-consolidation_max_strain_rate, 0, 0,
-                                0, -consolidation_max_strain_rate, 0,
-                                0, 0, -consolidation_max_strain_rate)
-
-# 圧密の終了判定を行うための閾値です。
-consolidation_thres_ratio = 0.99
+consolidation_velGrad = Matrix3(-initial_parameters["consolidation_max_strain_rate"], 0, 0,
+                                0, -initial_parameters["consolidation_max_strain_rate"], 0,
+                                0, 0, -initial_parameters["consolidation_max_strain_rate"])
 
 # 一回摩擦係数を落とした後何ステップ分放置するかを計算するための変数です。
 val_iter_after_kn_drop = 0
 
-
-### 繰り返しせん断に関する定数・変数 ###
-
-# 繰り返しせん断時の反転を応力で定義するか、ひずみで定義するかを決めます。Trueがひずみ定義です。
-flag_strain_reversal = False
-cyclic_loading_max_strain_rate = 20    # 繰り返しせん断時での最大ひずみ速度です。
-cyclic_loading_velGrad_forward = Matrix3(0, cyclic_loading_max_strain_rate, 0,
+cyclic_loading_velGrad_forward = Matrix3(0, initial_parameters["cyclic_loading_max_strain_rate"], 0,
                                          0, 0, 0,
                                          0, 0, 0)
-cyclic_loading_velGrad_backward = Matrix3(0, -cyclic_loading_max_strain_rate, 0,
+cyclic_loading_velGrad_backward = Matrix3(0, -initial_parameters["cyclic_loading_max_strain_rate"], 0,
                                           0, 0, 0,
                                           0, 0, 0)
 
-# 繰り返しせん断時の目標最大せん断ひずみ振幅です。：0.05→5%
-cyclic_shear_strain_amplitude = 0.002
-
-# 繰り返しせん断時の目標最大せん断応力振幅です。：15kPa=15×10^3Pa
-cyclic_shear_stress_amplitude = 15e3
-
-# 目標の繰り返し回数です。
-target_num_cycle = 100
-
 # 現時点での繰り返し回数です。
 current_num_cycle = 0
-
-# 目標の両振幅せん断ひずみです。：0.075→7.5%
-target_double_amplitude_shear_strain = 0.5
 
 # 現時点での両振幅せん断歪です。
 current_double_amplitude_shear_strain = 0
@@ -124,17 +86,8 @@ flag_zero_closs = False
 # 出力ファイルにヘッダーが生成されたかどうかのフラグ
 flag_header_done = False
 
-# 出力ファイルを出力する間隔
-output_iter_interval = 10
-
 # エネルギーのキーを保存しておくための変数です。
 temp_energy_keys = []
-
-# 後処理用のファイルを記録するかどうかのフラグです。
-flag_record_VTK = True
-
-# 後処理用のファイルを記録間隔
-VTK_iter_interval = 100
 
 # 外部せん断仕事を値を保存しておくための変数です
 input_work_per_volume = Matrix3(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -158,25 +111,37 @@ temp_folder_path = Path(os.path.abspath(
 temp_folder_path.mkdir(exist_ok=True)
 temp_sp_file_path = temp_folder_path / "temp.txt"
 
+# 定数をjson形式で出力しておきます
+json_file_path = output_folder_path / "initial_parameters.json"
+json_file = open(json_file_path, mode="w")
+json.dump(initial_parameters, json_file, indent=4)
+json_file.close()
 
 ############## 粒子と接触モデルの定義 ##############
 
 # 粒子単体の接触モデルを決めます。今回は一番単純なFrictMatを使用します。
-mat_sp = FrictMat(young=young, poisson=poisson,
-                  frictionAngle=frictangle, density=density)
+mat_sp = FrictMat(young=initial_parameters["contact_young_modulus"], 
+                  poisson=initial_parameters["contact_poisson_ratio"],
+                  frictionAngle=initial_parameters["contact_friction_angle"], 
+                  density=initial_parameters["sphere_density"])
 O.materials.append(mat_sp)
 
 # 粒子を生成するコードです。
 # 過去に同じ粒子を生成したことがある場合には、flag_import_pack_fileをTrueにすると、作成時間が短縮できます。
 pack_sp = pack.SpherePack()
-if flag_import_pack_file:
+if initial_parameters["flag_import_existing_pack_file"]:
     pack_sp.load(str(temp_sp_file_path))
     O.periodic = True
-    O.cell.hSize = Matrix3(maxCorner_x, 0, 0, 0,
-                           maxCorner_y, 0, 0, 0, maxCorner_z)
+    O.cell.hSize = Matrix3(initial_parameters["cell_coord_max_x"], 0, 0, 
+                           0, initial_parameters["cell_coord_max_y"], 0, 
+                           0, 0, initial_parameters["cell_coord_max_z"])
 else:
-    pack_sp.makeCloud((0, 0, 0), (maxCorner_x, maxCorner_y, maxCorner_z),
-                      rMean=rMean, rRelFuzz=rRelFuzz, periodic=True,
+    pack_sp.makeCloud((0, 0, 0), (initial_parameters["cell_coord_max_x"], 
+                                  initial_parameters["cell_coord_max_y"], 
+                                  initial_parameters["cell_coord_max_z"]),
+                      rMean=initial_parameters["sphere_radius_mean"], 
+                      rRelFuzz=initial_parameters["sphere_radius_variance"], 
+                      periodic=True,
                       seed=-1)
     pack_sp.save(str(temp_sp_file_path))
 
@@ -190,34 +155,19 @@ O.dt = .1 * PWaveTimeStep()
 
 ############## エンジンの定義 ##############
 
-if flag_record_VTK:
-    O.engines = [
-        ForceResetter(),
-        InsertionSortCollider(
-            [Bo1_Sphere_Aabb(), Bo1_Box_Aabb()]),
-        InteractionLoop(
-            [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom()],
-            [Ip2_FrictMat_FrictMat_FrictPhys()],
-            [Law2_ScGeom_FrictPhys_CundallStrack()]
-        ),
-        NewtonIntegrator(damping=0.2),
-        PyRunner(iterPeriod=1, command="checkState()"),
-        PyRunner(iterPeriod=output_iter_interval, command="exportData()")
-    ]
-else:
-    O.engines = [
-        ForceResetter(),
-        InsertionSortCollider(
-            [Bo1_Sphere_Aabb(), Bo1_Box_Aabb()]),
-        InteractionLoop(
-            [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom()],
-            [Ip2_FrictMat_FrictMat_FrictPhys()],
-            [Law2_ScGeom_FrictPhys_CundallStrack()]
-        ),
-        NewtonIntegrator(damping=0.2),
-        PyRunner(iterPeriod=1, command="checkState()"),
-        PyRunner(iterPeriod=output_iter_interval, command="exportData()")
-    ]
+O.engines = [
+    ForceResetter(),
+    InsertionSortCollider(
+        [Bo1_Sphere_Aabb(), Bo1_Box_Aabb()]),
+    InteractionLoop(
+        [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom()],
+        [Ip2_FrictMat_FrictMat_FrictPhys()],
+        [Law2_ScGeom_FrictPhys_CundallStrack()]
+    ),
+    NewtonIntegrator(damping=0.2),
+    PyRunner(iterPeriod=1, command="checkState()"),
+    PyRunner(iterPeriod=initial_parameters["output_txt_iter_interval"], command="exportData()")
+]
 
 
 ############## 細かなフラグの変更 ##############
@@ -253,16 +203,16 @@ def checkState():
 
         # 平均主応力によって速度勾配テンソルを変化させます。
         O.cell.velGrad = consolidation_velGrad * \
-            (1 - mean_stress / consolidation_stress)
+            (1 - mean_stress / initial_parameters["consolidation_stress"])
 
         # 平均主応力が所定の応力を超えた状態で次の状態に移行
         # その際に粒子の内部摩擦角を0.9倍にして若干滑りやすい状態→密度が上昇しやすい状態にする
-        if mean_stress >= consolidation_stress * consolidation_thres_ratio:
+        if mean_stress >= initial_parameters["consolidation_stress"] * initial_parameters["consolidation_thres_ratio"]:
             stage_index = 1
-            setContactFriction(O.materials[0].frictionAngle * 0.9)
+            setContactFriction(O.materials[0].frictionAngle * initial_parameters["contact_friction_angle_decrement_ratio_consolidation"])
             val_iter_after_kn_drop = O.iter
             
-            if O.iter % output_iter_interval != 0:
+            if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
                 exportData(flag_unique=True)
 
 
@@ -271,7 +221,7 @@ def checkState():
 
         # 平均主応力によって速度勾配テンソルを変化させます。
         O.cell.velGrad = consolidation_velGrad * \
-            (1 - mean_stress / consolidation_stress) * 0.1
+            (1 - mean_stress / initial_parameters["consolidation_stress"]) * 0.1
 
         # 500ステップ回っていないと、次のステージに進むか現在のステージにとどまるかの判定ができないようにします。
         flag_consolidation_stabilize = (O.iter - val_iter_after_kn_drop > 500)
@@ -282,8 +232,8 @@ def checkState():
             # flag_consolidation_stress：ここでは平均主応力が所定の応力を超えた状態かどうかをチェックしています。
             # flag_consolidation_porosity：ここでは与えた間隙比(空隙率)よりも密になっているかどうかをチェックしています。
             # flag_consolidation_force：準静的状態かどうかを見るために非平衡力を見ています。
-            flag_consolidation_stress = mean_stress >= consolidation_stress * \
-                consolidation_thres_ratio
+            flag_consolidation_stress = mean_stress >= initial_parameters["consolidation_stress"] * \
+                initial_parameters["consolidation_thres_ratio"]
             flag_consolidation_porosity = utils.porosity() <= target_porosity
             flag_consolidation_force = utils.unbalancedForce() < 0.2
 
@@ -297,15 +247,15 @@ def checkState():
 
                     stage_index = 2
 
-                    setContactFriction(frictangle)
+                    setContactFriction(initial_parameters["contact_friction_angle"])
                     O.cell.velGrad = cyclic_loading_velGrad_forward
                     prev_shear_strain = e01
 
-                    if O.iter % output_iter_interval != 0:
+                    if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
                         exportData(flag_unique=True)
 
                 else:
-                    setContactFriction(O.materials[0].frictionAngle * 0.9)
+                    setContactFriction(O.materials[0].frictionAngle * initial_parameters["contact_friction_angle_decrement_ratio_consolidation"])
                     val_iter_after_kn_drop = O.iter
 
     elif stage_index == 2:
@@ -313,15 +263,15 @@ def checkState():
         if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain):
             current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain)
 
-        if current_num_cycle > target_num_cycle or current_double_amplitude_shear_strain > target_double_amplitude_shear_strain:
+        if current_num_cycle > initial_parameters["cyclic_shear_num_cycle_target"] or current_double_amplitude_shear_strain > initial_parameters["cyclic_shear_double_amplitude_target"]:
             print("Cyclic loading has just finished!")
             finish_simulation()
 
         else:
-            if flag_strain_reversal:
-                flag_reversal = e01 > cyclic_shear_strain_amplitude
+            if initial_parameters["flag_strain_reversal"]:
+                flag_reversal = e01 > initial_parameters["cyclic_shear_strain_amplitude"]
             else:
-                flag_reversal = s01 > cyclic_shear_stress_amplitude
+                flag_reversal = s01 > initial_parameters["cyclic_shear_stress_amplitude"]
 
             if flag_reversal:
                 print("Current Cycle: " + str(current_num_cycle), end="")
@@ -333,13 +283,13 @@ def checkState():
 
                 print(" Next Backward Cycle: " + str(current_num_cycle))
                 
-                if O.iter % output_iter_interval != 0:
+                if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
                     exportData(flag_unique=True)
             else:
                 flag_zero_closs = flag_zero_closs ^ (prev_shear_strain * e01 <= 0)
                 
                 if flag_zero_closs:
-                    if O.iter % output_iter_interval != 0:
+                    if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
                         exportData(flag_unique=True)
                         
                     flag_zero_closs = False
@@ -349,15 +299,15 @@ def checkState():
         if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain):
             current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain)
 
-        if current_num_cycle > target_num_cycle or current_double_amplitude_shear_strain > target_double_amplitude_shear_strain:
+        if current_num_cycle > initial_parameters["cyclic_shear_num_cycle_target"] or current_double_amplitude_shear_strain > initial_parameters["cyclic_shear_double_amplitude_target"]:
             print("Cyclic loading has just finished!")
             finish_simulation()
 
         else:
-            if flag_strain_reversal:
-                flag_reversal = e01 < -cyclic_shear_strain_amplitude
+            if initial_parameters["flag_strain_reversal"]:
+                flag_reversal = e01 < -initial_parameters["cyclic_shear_strain_amplitude"]
             else:
-                flag_reversal = s01 < -cyclic_shear_stress_amplitude
+                flag_reversal = s01 < -initial_parameters["cyclic_shear_stress_amplitude"]
 
             if flag_reversal:
                 print("Current Cycle: " + str(current_num_cycle), end="")
@@ -369,13 +319,13 @@ def checkState():
 
                 print(" Next Forward Cycle: " + str(current_num_cycle))
                 
-                if O.iter % output_iter_interval != 0:
+                if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
                     exportData(flag_unique=True)
             else:
                 flag_zero_closs = flag_zero_closs ^ (prev_shear_strain * e01 <= 0)
                 
                 if flag_zero_closs:
-                    if O.iter % output_iter_interval != 0:
+                    if O.iter % initial_parameters["output_txt_iter_interval"] != 0:
                         exportData(flag_unique=True)
                         
                     flag_zero_closs = False
@@ -483,7 +433,7 @@ def exportData(flag_unique=False):
         with open(output_file_path, 'w') as f:
             f.writelines(lines)
     
-    if flag_record_VTK and (O.iter % VTK_iter_interval == 0 or flag_unique):
+    if initial_parameters["flag_output_VTK"] and (O.iter % initial_parameters["output_VTK_iter_interval"] == 0 or flag_unique):
         vtk_recorder()
 
 
