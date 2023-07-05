@@ -62,11 +62,11 @@ consolidation_velGrad = Matrix3(-initial_parameters["consolidation_max_strain_ra
 val_iter_after_kn_drop = 0
 
 # 繰り返し載荷用の速度勾配テンソルです
-cyclic_loading_velGrad_forward = Matrix3(0, initial_parameters["cyclic_loading_max_strain_rate"], 0,
-                                         0, 0, 0,
+cyclic_loading_velGrad_forward = Matrix3(0, 0, 0,
+                                         0, 0, initial_parameters["cyclic_loading_max_strain_rate"],
                                          0, 0, 0)
-cyclic_loading_velGrad_backward = Matrix3(0, -initial_parameters["cyclic_loading_max_strain_rate"], 0,
-                                          0, 0, 0,
+cyclic_loading_velGrad_backward = Matrix3(0, 0, 0,
+                                          0, 0, -initial_parameters["cyclic_loading_max_strain_rate"],
                                           0, 0, 0)
 
 # 現時点での繰り返し回数です。
@@ -204,7 +204,7 @@ def checkState():
     
     # せん断ひずみを記憶しておきます。
     prev_shear_strain_iter[:-1] = prev_shear_strain_iter[1:]
-    prev_shear_strain_iter[-1] = e01
+    prev_shear_strain_iter[-1] = e12
     
     # 圧密の場合の処理です。
     if stage_index == 0:
@@ -256,7 +256,7 @@ def checkState():
 
                     setContactFriction(initial_parameters["contact_friction_angle"])
                     O.cell.velGrad = cyclic_loading_velGrad_forward
-                    prev_shear_strain_reversal = e01
+                    prev_shear_strain_reversal = e12
                     flag_zero_closs_potensial = True
 
                     exportData(flag_unique=True)
@@ -267,8 +267,8 @@ def checkState():
 
     elif stage_index == 2:
 
-        if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain_reversal):
-            current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain_reversal)
+        if current_double_amplitude_shear_strain < abs(e12 -  prev_shear_strain_reversal):
+            current_double_amplitude_shear_strain = abs(e12 -  prev_shear_strain_reversal)
 
         if current_num_cycle > initial_parameters["cyclic_shear_num_cycle_target"] or current_double_amplitude_shear_strain > initial_parameters["cyclic_shear_double_amplitude_target"]:
             print("Cyclic loading has just finished!")
@@ -276,9 +276,9 @@ def checkState():
 
         else:
             if initial_parameters["flag_strain_reversal"]:
-                flag_reversal = e01 > initial_parameters["cyclic_shear_strain_amplitude"]
+                flag_reversal = e12 > initial_parameters["cyclic_shear_strain_amplitude"]
             else:
-                flag_reversal = s01 > initial_parameters["cyclic_shear_stress_amplitude"]
+                flag_reversal = s12 > initial_parameters["cyclic_shear_stress_amplitude"]
 
             if flag_reversal:
                 print("Current Cycle: " + str(current_num_cycle), end="")
@@ -286,7 +286,7 @@ def checkState():
                 stage_index = 3
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_backward
-                prev_shear_strain_reversal = e01
+                prev_shear_strain_reversal = e12
                 flag_zero_closs_potensial = True
 
                 print(" Next Backward Cycle: " + str(current_num_cycle))
@@ -294,14 +294,14 @@ def checkState():
                 exportData(flag_unique=True)
             else:
                 if flag_zero_closs_potensial:
-                    if prev_shear_strain_iter.mean() * e01 < 0:
+                    if prev_shear_strain_iter.mean() * e12 < 0:
                         exportData(flag_unique=True)
                         flag_zero_closs_potensial = False
 
     elif stage_index == 3:
 
-        if current_double_amplitude_shear_strain < abs(e01 -  prev_shear_strain_reversal):
-            current_double_amplitude_shear_strain = abs(e01 -  prev_shear_strain_reversal)
+        if current_double_amplitude_shear_strain < abs(e12 -  prev_shear_strain_reversal):
+            current_double_amplitude_shear_strain = abs(e12 -  prev_shear_strain_reversal)
 
         if current_num_cycle > initial_parameters["cyclic_shear_num_cycle_target"] or current_double_amplitude_shear_strain > initial_parameters["cyclic_shear_double_amplitude_target"]:
             print("Cyclic loading has just finished!")
@@ -309,9 +309,9 @@ def checkState():
 
         else:
             if initial_parameters["flag_strain_reversal"]:
-                flag_reversal = e01 < -initial_parameters["cyclic_shear_strain_amplitude"]
+                flag_reversal = e12 < -initial_parameters["cyclic_shear_strain_amplitude"]
             else:
-                flag_reversal = s01 < -initial_parameters["cyclic_shear_stress_amplitude"]
+                flag_reversal = s12 < -initial_parameters["cyclic_shear_stress_amplitude"]
 
             if flag_reversal:
                 print("Current Cycle: " + str(current_num_cycle), end="")
@@ -319,7 +319,7 @@ def checkState():
                 stage_index = 2
                 current_num_cycle += 0.5
                 O.cell.velGrad = cyclic_loading_velGrad_forward
-                prev_shear_strain_reversal = e01
+                prev_shear_strain_reversal = e12
                 flag_zero_closs_potensial = True
 
                 print(" Next Forward Cycle: " + str(current_num_cycle))
@@ -327,7 +327,7 @@ def checkState():
                 exportData(flag_unique=True)
             else:
                 if flag_zero_closs_potensial:
-                    if prev_shear_strain_iter.mean() * e01 < 0:
+                    if prev_shear_strain_iter.mean() * e12 < 0:
                         exportData(flag_unique=True)
                         flag_zero_closs_potensial = False
 
@@ -375,8 +375,8 @@ def exportData(flag_unique=False):
           ' Nc:{:>5.1f}'.format(current_num_cycle),
           ' DA:{:>9.6f}'.format(current_double_amplitude_shear_strain), 
           ' p:{:>7.2f}'.format(mean_stress),
-          ' s01:{:>7.2f}'.format(s01),
-          ' e01:{:>10.6f}'.format(e01),
+          ' s12:{:>7.2f}'.format(s12),
+          ' e12:{:>10.6f}'.format(e12),
           ' ev:{:>10.6f}'.format(ev),
           ' VoidR:{:> 7.4f}'.format(temp_void_ratio) + ' /{:> 5.4f}'.format(initial_parameters["consolidation_void_ratio_target"]),
           ' UnF:{:> 5.2f}'.format(temp_unbalanced_force),
@@ -387,10 +387,10 @@ def exportData(flag_unique=False):
     plot.addData(i=i,
                  s00=s00,
                  s22=s22,
-                 s01=s01,
+                 s12=s12,
                  e00=e00,
                  e22=e22,
-                 e01=e01)
+                 e12=e12)
 
     # 出力データを準備します
     energy_dict = dict(O.energy.items())
@@ -435,9 +435,9 @@ def exportData(flag_unique=False):
         vtk_recorder()
 
 
-plot.plots = {"i": ("s00", "s22", "s01"),
-              "i ": ("e00", "e22", "e01"),
-              " e01": ("s01"),
-              " s22 ": ("s01")}
+plot.plots = {"i": ("s00", "s22", "s12"),
+              "i ": ("e00", "e22", "e12"),
+              " e12": ("s12"),
+              " s22 ": ("s12")}
 
 plot.plot()
