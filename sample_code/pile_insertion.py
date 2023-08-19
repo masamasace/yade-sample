@@ -13,11 +13,22 @@ import sys
 print("")
 print("-------------------------------------")
 
-############## Constant and Variable ##############
-pile_height = 0.5
+
+############## Constants ##############
+initial_parameters = {
+    "pile_height": 0.5,
+    "manual_contact_model": True
+}
+
+
+############## Temporal Variables ##############
 state_index = 0
 
+
 ############## Contact Model ##############
+if initial_parameters["manual_contact_model"]:
+    pass
+
 
 ############## Boundary Box ##############
 O.periodic = True
@@ -29,17 +40,20 @@ lowBox = box(center=(0.5, 0.005, 0.5), extents=(5, 0.005, 5),
              fixed=True, wire=False)
 O.bodies.append(lowBox)
 
+
 ############## Sphere ##############
 sp = pack.SpherePack()
-sp.makeCloud((0, 0, 0), (1, 1, 1), rMean=.04, rRelFuzz=0, seed=1)
+sp.makeCloud((0, 0, 0), (1, 1, 1), rMean=.02, rRelFuzz=0, seed=1)
 sp.toSimulation()
+
 
 ############## Sphere ##############
 cylIds = []
 nodesIds = []
-pile = cylinder((0.5, 1.25, 0.5),(0.5, 1.25+pile_height, 0.5),
+pile = cylinder((0.5, 1.25, 0.5),(0.5, 1.25+initial_parameters["pile_height"], 0.5),
                 cylIds=cylIds, nodesIds=nodesIds, radius=0.2, fixed=True)
 print(cylIds)
+
 
 ############## Engine ##############
 # "allowBiggerThanPeriod=True" in InsertionSortCollider is needed to avoid spheres from falling down out of the box
@@ -95,6 +109,6 @@ def ChangeState():
             O.bodies[nodesIds[1]].state.vel = Vector3(0, -0.2, 0)
             state_index = 1
     elif  state_index == 1:
-        if O.bodies[cylIds[0]].state.pos[1] <= pile_height / 2:
+        if O.bodies[cylIds[0]].state.pos[1] <= initial_parameters["pile_height"] / 2:
             O.pause()
         
