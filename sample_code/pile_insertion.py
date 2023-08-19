@@ -24,8 +24,8 @@ print("Start simulation started at " +
 initial_parameters = {
     "pile_radius": 0.125,
     "pile_height": 1,
-    "pile_insertion_velocity": -0.2,
-    "sphere_diameter_mean": 0.05,
+    "pile_insertion_velocity": -0.02,
+    "sphere_diameter_mean": 0.03,
     "sphere_diameter_std_dev": 0,
     "sphere_pack_initial_height": 5,
     "base_box_height_ratio_to_mean_diameter": 5,
@@ -33,7 +33,7 @@ initial_parameters = {
     "flag_import_existing_pack_file" : False,
     "manual_contact_model": True,
     "flag_output_VTK" : True,
-    "export_data_iter_interval" : 10,
+    "export_data_iter_interval" : 100,
     "local_voxel_of_interest": []
 }
 
@@ -58,6 +58,7 @@ temp_hsize_y = math.ceil(temp_pile_initial_position_y +
 
 temp_pause_pile_position_y = temp_base_box_height / 2 + initial_parameters["pile_radius"] + initial_parameters["sphere_diameter_mean"]
 
+temp_initial_pile_disp = 0
 # print temporal variables
 print("Box width: ", '{:> 4.2f}'.format(initial_parameters["simulation_box_width"]))
 print("Base box height: ", '{:> 4.2f}'.format(temp_base_box_height))
@@ -226,10 +227,10 @@ def ExportData():
 
 
 def CheckState():
-    global state_index
+    global state_index, temp_initial_pile_disp
 
     if state_index == 0:
-        if utils.unbalancedForce() < 0.1 and O.iter > 10000:
+        if utils.unbalancedForce() < 0.01 and O.iter > 10000:
             
             temp_pile_body_id = cylIds + nodesIds
             temp_body_max_y = max(O.bodies[i].state.pos[1] for i in range(len(O.bodies)) if i not in temp_pile_body_id)
@@ -241,23 +242,22 @@ def CheckState():
             O.bodies[cylIds[0]].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
             O.bodies[cylIds[0]].state.pos = Vector3(temp_pile_initial_position_x, temp_body_max_y, temp_pile_initial_position_z)
             
+            temp_initial_pile_disp = O.bodies[cylIds[0]].state.displ()[1]
+            
             O.bodies[nodesIds[0]].state.blockedDOFs = "xyzXYZ"
             O.bodies[nodesIds[0]].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
             O.bodies[nodesIds[0]].state.pos = Vector3(temp_pile_initial_position_x, temp_body_max_y, temp_pile_initial_position_z)
-            
             
             O.bodies[nodesIds[1]].state.blockedDOFs = "xyzXYZ"
             O.bodies[nodesIds[1]].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
             O.bodies[nodesIds[1]].state.pos = Vector3(temp_pile_initial_position_x, temp_body_max_y+initial_parameters["pile_height"], temp_pile_initial_position_z)
             
-            for each_body in O.bodies:
-                each_body.state.refPos = each_body.state.pos
-            
             state_index = 1
+
     elif  state_index == 1:
         
         flag_bottom_reached = O.bodies[cylIds[0]].state.pos[1] <= initial_parameters["sphere_diameter_mean"] + initial_parameters["pile_radius"]
-        flag_pile_length = abs(O.bodies[cylIds[0]].state.displ()[1]) >= initial_parameters["pile_height"]
+        flag_pile_length = abs(O.bodies[cylIds[0]].state.displ()[1] - temp_initial_pile_disp) >= initial_parameters["pile_height"]
         
         if flag_bottom_reached or flag_pile_length:
             O.pause()
