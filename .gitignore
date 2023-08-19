@@ -1,2 +1,3 @@
 *.csv
 !result/.gitkeep
+# !memo/.gitkeep
