@@ -1,3 +1,16 @@
+# 2023/08/21
+
+## 現時点での課題
+- 初期状態で一番下にある球が周期教会で上に移動してしまう
+- Wall-SphereのMaterialが設定されていない
+- 杭の位置が不明
+    - VTKのSpheresには収録されているようだ
+    - よく見るとSpheresはCylinderとして認識されていない
+    - 単に２つの球が埋め込まれているだけ...
+    - Facetにしたほうが良さそう...
+        - Facetには鉛直力を取り出すメソッドもある([例えばこれ](https://yade-dem.org/doc/yade.wrapper.html#yade.wrapper.Facet))
+    - Facetで作ったほうが後々のためになりそう
+
 # 2023/08/19
 
 ## 論文に向けて行いたいこと
