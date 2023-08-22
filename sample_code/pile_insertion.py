@@ -25,14 +25,14 @@ print("Start simulation started at " +
 initial_parameters = {
     "pile_radius": 0.125,        # Temporal value to be updated after loading stl file
     "pile_height": 1,            # Temporal value to be updated after loading stl file
-    "pile_insertion_velocity": -0.2,
-    "sphere_diameter_mean": 0.0025,
+    "pile_insertion_velocity": -0.02,
+    "sphere_diameter_mean": 0.001,
     "sphere_diameter_std_dev": 0,
     "sphere_pack_initial_height": 0.5,
     "base_box_height_ratio_to_mean_diameter": 5,
     "simulation_box_width": 0.04,
     "flag_import_existing_pack_file" : False,
-    "flag_import_heavy_stl_model": False,
+    "flag_import_heavy_stl_model": True,
     "manual_contact_model": True,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 50,
@@ -288,10 +288,9 @@ def checkState():
         
         if utils.unbalancedForce() < 0.05 and O.iter > 10000:
             
-            temp_sphere_squared_velocity_min = min(O.bodies[i].state.vel.norm() for i in range(sphere_id_max))
+            temp_sphere_velocity_max = max(O.bodies[i].state.vel.norm() for i in range(sphere_id_max))
             
-            
-            if temp_sphere_squared_velocity_min < 0.1:
+            if temp_sphere_velocity_max < 0.1:
                 temp_body_max_y = max(O.bodies[i].state.pos[1] for i in range(sphere_id_max))
                 print("Highest Y position: ", '{:> 4.2f}'.format(temp_body_max_y))
                             
