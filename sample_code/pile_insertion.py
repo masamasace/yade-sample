@@ -30,7 +30,7 @@ initial_parameters = {
     "sphere_diameter_std_dev": 0,
     "sphere_pack_initial_height": 0.5,
     "base_box_height_ratio_to_mean_diameter": 5,
-    "simulation_box_width": 0.04,
+    "simulation_box_width": 0.03,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": True,
     "manual_contact_model": True,
