@@ -26,7 +26,7 @@ initial_parameters = {
     "pile_radius": 0.125,        # Temporal value to be updated after loading stl file
     "pile_height": 1,            # Temporal value to be updated after loading stl file
     "pile_insertion_velocity": -0.02,
-    "sphere_diameter_mean": 0.001,
+    "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_pack_initial_height": 0.5,
     "base_box_height_ratio_to_mean_diameter": 5,
@@ -166,9 +166,9 @@ temp_flag_pile_facets_on_top = pile_facet_data[:, 1] == pile_facets_pos_Y_top
 temp_flag_pile_facets_at_bottom = pile_facet_data[:, 1] == pile_facets_pos_Y_bottom
 temp_flag_pile_facets_on_lateral = ~(temp_flag_pile_facets_on_top | temp_flag_pile_facets_at_bottom)
 
-pile_facets_id_top = pile_facet_data[temp_flag_pile_facets_on_top, 0]
-pile_facets_id_bottom = pile_facet_data[temp_flag_pile_facets_at_bottom, 0]
-pile_facets_id_lateral = pile_facet_data[temp_flag_pile_facets_on_lateral, 0]
+pile_facets_id_top = np.array(pile_facet_data[temp_flag_pile_facets_on_top, 0], dtype=np.int32)
+pile_facets_id_bottom = np.array(pile_facet_data[temp_flag_pile_facets_at_bottom, 0], dtype=np.int32)
+pile_facets_id_lateral = np.array(pile_facet_data[temp_flag_pile_facets_on_lateral, 0], dtype=np.int32)
 
 # update simulation box size
 temp_hsize_y = math.ceil(pile_facets_pos_Y_top)
@@ -176,8 +176,11 @@ O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
                        0, temp_hsize_y, 0,
                        0, 0, initial_parameters["simulation_box_width"])
 
-cylIds = []
-nodesIds = []
+############## Parameter Check ##############
+print(O.bodies[0].material.dict())
+print(pile_facets_id_top[0])
+# print(O.bodies[pile_facets_id_top[0]].material.dict())
+print(O.bodies[int(pile_facets_id_top[0])].material.dict())
 
 
 ############## Engine ##############
