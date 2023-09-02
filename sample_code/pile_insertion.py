@@ -12,7 +12,7 @@ import json
 import math
 import collections
 
-# Dividing Lines to make the output more comprehensive
+# Dividing line to make the output more comprehensive
 print("")
 print("-------------------------------------")
 
@@ -23,17 +23,27 @@ print("Start simulation started at " +
 
 ############## Constants ##############
 initial_parameters = {
-    "pile_radius": 0.125,        # Temporal value to be updated after loading stl file
-    "pile_height": 1,            # Temporal value to be updated after loading stl file
+    "pile_height": 0.3,            # Temporary value to be updated after loading stl file
     "pile_insertion_velocity": -0.02,
+    "flag_uniform_sphere_diameter": False,
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
-    "sphere_pack_initial_height": 0.5,
+    "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
+    "sphere_size_distribution_size_ratio": 15,
+    "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
+    "sphere_density": 2650.0,
+    "manual_contact_model": True,
+    "sphere_contact_normal_stiffness": 8.0e7,
+    "sphere_contact_stiffness_ratio": 0.25,
+    "sphere_contact_frictional_coeffcient": 0.5,
+    "pile_contact_normal_stiffness": 6.0e12,
+    "pile_contact_stiffness_ratio": 0.25,
+    "pile_contact_frictional_coeffcient": 0.5,
+    "sphere_pack_initial_height": 0.75,
     "base_box_height_ratio_to_mean_diameter": 5,
-    "simulation_box_width": 0.03,
+    "simulation_box_width": 0.04,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": True,
-    "manual_contact_model": True,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 50,
     "export_data_iter_interval" : 100,
@@ -41,36 +51,35 @@ initial_parameters = {
 }
 
 
-############## Temporal Variables ##############
+############## Temporary Variables ##############
 state_index = 0
+temp_sphere_size_distribution_size = [ssd*initial_parameters["sphere_size_distribution_size_ratio"] for ssd in initial_parameters["sphere_size_distribution_size"]]
 
-temp_base_box_height = initial_parameters["sphere_diameter_mean"] * initial_parameters["base_box_height_ratio_to_mean_diameter"]
+if initial_parameters["flag_uniform_sphere_diameter"]:
+    temp_max_sphere_size = initial_parameters["sphere_diameter_mean"]
+    temp_min_sphere_size = initial_parameters["sphere_diameter_mean"]
+else:
+    temp_max_sphere_size = max(temp_sphere_size_distribution_size)
+    temp_min_sphere_size = min(temp_sphere_size_distribution_size)
 
-temp_lower_bound = initial_parameters["sphere_diameter_mean"]
+temp_base_box_height = temp_max_sphere_size * initial_parameters["base_box_height_ratio_to_mean_diameter"]
+
+temp_lower_bound = temp_max_sphere_size
 temp_lower_bound_y = temp_lower_bound * 2 + temp_base_box_height / 2
-temp_upper_bound = initial_parameters["simulation_box_width"] - initial_parameters["sphere_diameter_mean"]
-temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"] - initial_parameters["sphere_diameter_mean"]
+temp_upper_bound = initial_parameters["simulation_box_width"] - temp_max_sphere_size
+temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"] - temp_max_sphere_size
 
 temp_pile_initial_position_x = initial_parameters["simulation_box_width"] / 2
-temp_pile_initial_position_y = temp_upper_bound_y + initial_parameters["sphere_diameter_mean"] + initial_parameters["pile_radius"]
+temp_pile_initial_position_y = temp_upper_bound_y + temp_max_sphere_size
 temp_pile_initial_position_z = temp_pile_initial_position_x
 
-temp_hsize_y = math.ceil(temp_pile_initial_position_y + 
-                          initial_parameters["pile_height"] + 
-                          initial_parameters["pile_radius"])
+temp_hsize_y = math.ceil((temp_pile_initial_position_y + initial_parameters["pile_height"]) * 10) / 10
 
-temp_pause_pile_position_y = temp_base_box_height / 2 + initial_parameters["pile_radius"] + initial_parameters["sphere_diameter_mean"]
+temp_pause_pile_position_y = temp_base_box_height / 2 + temp_max_sphere_size
 
 temp_initial_pile_disp = 0
 
-# print temporal variables
-print("Box width:", '{:> 4.2f}'.format(initial_parameters["simulation_box_width"]))
-print("Base box height:", '{:> 4.2f}'.format(temp_base_box_height))
-print("Initial Y of top of sphere pack:", '{:> 4.2f}'.format(temp_upper_bound_y))
-print("Initial Y of bottom of pile:", '{:> 4.2f}'.format(temp_pile_initial_position_y))
-print("Initial Y of top of pile:", '{:> 4.2f}'.format(temp_pile_initial_position_y + initial_parameters["pile_height"] + initial_parameters["pile_radius"]))
-print("Box height:", '{:> 4.2f}'.format(temp_hsize_y))
-print("Final Y of bottom of pile:", '{:> 4.2f}'.format(temp_pause_pile_position_y))
+
 
 
 ############## Make some directories##############
@@ -100,7 +109,17 @@ json_file.close()
 
 ############## Contact Model ##############
 if initial_parameters["manual_contact_model"]:
-    pass
+    frict_mat_sphere = FrictMat(young=initial_parameters["sphere_contact_normal_stiffness"], 
+                               poisson=initial_parameters["sphere_contact_stiffness_ratio"],
+                               frictionAngle=initial_parameters["sphere_contact_frictional_coeffcient"], 
+                               density=initial_parameters["sphere_density"])
+    material_sphere_Id = O.materials.append(frict_mat_sphere)
+    
+    frict_mat_facet = FrictMat(young=initial_parameters["pile_contact_normal_stiffness"], 
+                              poisson=initial_parameters["pile_contact_stiffness_ratio"],
+                              frictionAngle=initial_parameters["pile_contact_frictional_coeffcient"], 
+                              density=1000)
+    material_facet_Id = O.materials.append(frict_mat_facet)
 
 
 ############## Base Boundary Box ##############
@@ -118,16 +137,27 @@ pack_sp = pack.SpherePack()
 if initial_parameters["flag_import_existing_pack_file"]:
     pack_sp.load(str(temp_sp_file_path))
     O.periodic = True
-else:    
-    pack_sp.makeCloud((temp_lower_bound, temp_lower_bound_y, temp_lower_bound), 
-                      (temp_upper_bound, temp_upper_bound_y, temp_upper_bound), 
-                      rMean=initial_parameters["sphere_diameter_mean"], 
-                      rRelFuzz=initial_parameters["sphere_diameter_std_dev"],
-                      seed=1,
-                      periodic=True)
-    pack_sp.save(str(temp_sp_file_path))
+else: 
+    if initial_parameters["flag_uniform_sphere_diameter"]:   
+        pack_sp.makeCloud((temp_lower_bound, temp_lower_bound_y, temp_lower_bound), 
+                        (temp_upper_bound, temp_upper_bound_y, temp_upper_bound), 
+                        rMean=initial_parameters["sphere_diameter_mean"], 
+                        rRelFuzz=initial_parameters["sphere_diameter_std_dev"],
+                        seed=1,
+                        periodic=True)
+        pack_sp.save(str(temp_sp_file_path))
+    else:
+        pack_sp.makeCloud((temp_lower_bound, temp_lower_bound_y, temp_lower_bound), 
+                        (temp_upper_bound, temp_upper_bound_y, temp_upper_bound), 
+                        psdSizes=temp_sphere_size_distribution_size,
+                        psdCumm=initial_parameters["sphere_size_distribution_cumm"],
+                        seed=1,
+                        periodic=True)
+        pack_sp.save(str(temp_sp_file_path))
+        
 
-pack_sp.toSimulation()
+pack_sp.toSimulation(material=material_sphere_Id)
+
 O.periodic = True
 O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
                        0, temp_hsize_y, 0,
@@ -145,7 +175,8 @@ else:
 
 pile_facets = ymport.stl(stl_file_path, fixed=True, 
                         wire=True, noBound=False, 
-                        material=-1, scale=1/1000, 
+                        material=material_facet_Id, 
+                        scale=1/1000, 
                         shift=Vector3(temp_pile_initial_position_x, temp_pile_initial_position_y, temp_pile_initial_position_z))
 print(len(pile_facets), "facets of pile model are imported")
 
@@ -171,16 +202,19 @@ pile_facets_id_bottom = np.array(pile_facet_data[temp_flag_pile_facets_at_bottom
 pile_facets_id_lateral = np.array(pile_facet_data[temp_flag_pile_facets_on_lateral, 0], dtype=np.int32)
 
 # update simulation box size
-temp_hsize_y = math.ceil(pile_facets_pos_Y_top)
+temp_hsize_y = math.ceil(pile_facets_pos_Y_top * 10) / 10
 O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
                        0, temp_hsize_y, 0,
                        0, 0, initial_parameters["simulation_box_width"])
 
 ############## Parameter Check ##############
-print(O.bodies[0].material.dict())
-print(pile_facets_id_top[0])
-# print(O.bodies[pile_facets_id_top[0]].material.dict())
-print(O.bodies[int(pile_facets_id_top[0])].material.dict())
+print("Simulation box width:", '{:> 4.2f}'.format(initial_parameters["simulation_box_width"]))
+print("Base box height:", '{:> 4.2f}'.format(temp_base_box_height))
+print("Initial Y of top of sphere pack:", '{:> 4.2f}'.format(temp_upper_bound_y))
+print("Initial Y of bottom of pile:", '{:> 4.2f}'.format(temp_pile_initial_position_y))
+print("Initial Y of top of pile:", '{:> 4.2f}'.format(pile_facets_pos_Y_top))
+print("Simulation box height:", '{:> 4.2f}'.format(temp_hsize_y))
+print("Final Y of bottom of pile:", '{:> 4.2f}'.format(temp_pause_pile_position_y))
 
 
 ############## Engine ##############
@@ -297,7 +331,7 @@ def checkState():
                 temp_body_max_y = max(O.bodies[i].state.pos[1] for i in range(sphere_id_max))
                 print("Highest Y position: ", '{:> 4.2f}'.format(temp_body_max_y))
                             
-                temp_body_max_y += initial_parameters["sphere_diameter_mean"] 
+                temp_body_max_y += temp_max_sphere_size 
                 temp_initial_pile_disp = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
                 
                 temp_offset = temp_initial_pile_disp - temp_body_max_y
@@ -316,7 +350,7 @@ def checkState():
 
     elif  state_index == 2:
         
-        flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= initial_parameters["sphere_diameter_mean"]
+        flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
         flag_pile_length = abs(temp_initial_pile_disp - O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]) >= initial_parameters["pile_height"]
         
         if flag_bottom_reached or flag_pile_length:
