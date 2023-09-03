@@ -166,6 +166,7 @@ O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
 sphere_id_max = len(O.bodies)
 print(sphere_id_max, "spheres are genereted")
 
+
 ############## Pile ##############
 if not initial_parameters["flag_import_heavy_stl_model"]:
     stl_file_path = r"./temp/pile_v2_light.stl"
@@ -206,6 +207,7 @@ temp_hsize_y = math.ceil(pile_facets_pos_Y_top * 10) / 10
 O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
                        0, temp_hsize_y, 0,
                        0, 0, initial_parameters["simulation_box_width"])
+
 
 ############## Parameter Check ##############
 print("Simulation box width:", '{:> 4.2f}'.format(initial_parameters["simulation_box_width"]))
