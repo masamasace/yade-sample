@@ -29,7 +29,7 @@ initial_parameters = {
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
-    "sphere_size_distribution_size_ratio": 15,
+    "sphere_size_distribution_size_ratio": 20,
     "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
     "sphere_density": 2650.0,
     "manual_contact_model": True,
@@ -39,7 +39,8 @@ initial_parameters = {
     "pile_contact_normal_stiffness": 6.0e12,
     "pile_contact_stiffness_ratio": 0.25,
     "pile_contact_frictional_coeffcient": 0.5,
-    "sphere_pack_initial_height": 0.75,
+    "sphere_fall_height": 0.25,
+    "sphere_pack_initial_height": 0.5,
     "base_box_height_ratio_to_mean_diameter": 5,
     "simulation_box_width": 0.04,
     "flag_import_existing_pack_file" : False,
@@ -64,10 +65,16 @@ else:
 
 temp_base_box_height = temp_max_sphere_size * initial_parameters["base_box_height_ratio_to_mean_diameter"]
 
-temp_lower_bound = temp_max_sphere_size
-temp_lower_bound_y = temp_lower_bound * 2 + temp_base_box_height / 2
-temp_upper_bound = initial_parameters["simulation_box_width"] - temp_max_sphere_size
-temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"] - temp_max_sphere_size
+
+temp_lower_bound = 0
+# temp_lower_bound = temp_max_sphere_size
+temp_lower_bound_y = temp_max_sphere_size / 2
+# temp_lower_bound_y = temp_lower_bound * 2 + temp_base_box_height / 2
+
+temp_upper_bound = initial_parameters["simulation_box_width"]
+# temp_upper_bound = initial_parameters["simulation_box_width"] - temp_max_sphere_size
+temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"]
+# temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"] - temp_max_sphere_size
 
 temp_pile_initial_position_x = initial_parameters["simulation_box_width"] / 2
 temp_pile_initial_position_y = temp_upper_bound_y + temp_max_sphere_size
@@ -78,8 +85,6 @@ temp_hsize_y = math.ceil((temp_pile_initial_position_y + initial_parameters["pil
 temp_pause_pile_position_y = temp_base_box_height / 2 + temp_max_sphere_size
 
 temp_initial_pile_disp = 0
-
-
 
 
 ############## Make some directories##############
@@ -123,12 +128,27 @@ if initial_parameters["manual_contact_model"]:
 
 
 ############## Base Boundary Box ##############
+# utils.wallを使う方法もある
 
-base_box_width = initial_parameters["simulation_box_width"]
-lowBox = box(center=(base_box_width/2, 0, base_box_width/2), 
-             extents=(base_box_width*2, temp_base_box_height/2, base_box_width*2),
-             fixed=True, wire=False)
-O.bodies.append(lowBox)
+base_facet_1 = utils.facet([Vector3(0, 0, 0), 
+                             Vector3(initial_parameters["simulation_box_width"], 0, 0),
+                             Vector3(0, 0, initial_parameters["simulation_box_width"])],
+                            fixed=True,
+                            wire=False,
+                            material=material_facet_Id)
+base_facet_2 = utils.facet([Vector3(initial_parameters["simulation_box_width"], 0, initial_parameters["simulation_box_width"]), 
+                             Vector3(initial_parameters["simulation_box_width"], 0, 0),
+                             Vector3(0, 0, initial_parameters["simulation_box_width"])],
+                            fixed=True,
+                            wire=False,
+                            material=material_facet_Id)
+top_facet_1 = utils.facet([Vector3(0, temp_pile_initial_position_y, 0), 
+                             Vector3(initial_parameters["simulation_box_width"]*2, temp_pile_initial_position_y, 0),
+                             Vector3(0, temp_pile_initial_position_y, initial_parameters["simulation_box_width"]*2)],
+                            fixed=True,
+                            wire=False,
+                            material=material_facet_Id)
+base_top_facet_id = O.bodies.append([base_facet_1, base_facet_2, top_facet_1])
 
 
 ############## Sphere ##############
@@ -147,24 +167,25 @@ else:
                         periodic=True)
         pack_sp.save(str(temp_sp_file_path))
     else:
+        
         pack_sp.makeCloud((temp_lower_bound, temp_lower_bound_y, temp_lower_bound), 
                         (temp_upper_bound, temp_upper_bound_y, temp_upper_bound), 
                         psdSizes=temp_sphere_size_distribution_size,
                         psdCumm=initial_parameters["sphere_size_distribution_cumm"],
-                        seed=1,
-                        periodic=True)
-        pack_sp.save(str(temp_sp_file_path))
+                        seed=1,num=3000,
+                        periodic=True,)
         
+        pack_sp.save(str(temp_sp_file_path))
 
-pack_sp.toSimulation(material=material_sphere_Id)
+
+sphere_id = pack_sp.toSimulation(material=material_sphere_Id)
 
 O.periodic = True
 O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
                        0, temp_hsize_y, 0,
                        0, 0, initial_parameters["simulation_box_width"])
 
-sphere_id_max = len(O.bodies)
-print(sphere_id_max, "spheres are genereted")
+print(len(sphere_id), "spheres are genereted")
 
 
 ############## Pile ##############
@@ -227,13 +248,13 @@ O.dt = .5 * PWaveTimeStep()
 O.engines = [
     ForceResetter(),
     InsertionSortCollider(
-        [Bo1_Sphere_Aabb(), Bo1_Facet_Aabb(), Bo1_Box_Aabb()], allowBiggerThanPeriod=True),
+        [Bo1_Sphere_Aabb(), Bo1_Facet_Aabb()], allowBiggerThanPeriod=True),
     InteractionLoop(
-        [Ig2_Sphere_Sphere_ScGeom(), Ig2_Box_Sphere_ScGeom(), Ig2_Facet_Sphere_ScGeom()],
+        [Ig2_Sphere_Sphere_ScGeom(), Ig2_Facet_Sphere_ScGeom()],
         [Ip2_FrictMat_FrictMat_FrictPhys()],
         [Law2_ScGeom_FrictPhys_CundallStrack()]
     ),
-    NewtonIntegrator(damping=0.2, label="newton_integrator"),
+    NewtonIntegrator(damping=0.2, gravity=(0, -9.81, 0)),
     PyRunner(iterPeriod=initial_parameters["export_data_iter_interval"], command="exportData()"),
     PyRunner(iterPeriod=1, command="checkState()")
 ]
@@ -260,6 +281,7 @@ def exportData():
     output_str = "Iter: " + str(iter) + \
                  " Stage: " + str(state_index) + \
                  " UnF: " + '{:> 5.2f}'.format(temp_unbalanced_force) + \
+                 " Cn: " + '{:> 6.3f}'.format(temp_coord_num) + \
                  " Pos_cy: " + '{:> 6.3f}'.format(temp_pile_position_y) + \
                  " Fx_cy: " + '{:> 8.2f}'.format(temp_pile_force_x) + \
                  " Fy_cy: " + '{:> 8.2f}'.format(temp_pile_force_y) + \
@@ -315,15 +337,34 @@ def calcuratePileMechanicalValues(debug=False):
 def checkState():
     global state_index, temp_initial_pile_disp
 
-    # initial stabilization without gravity force
-    # maybe unnecessary
+    # initial particle diameter expansion without gravity force
+    # expanding radius 
     if state_index == 0:
-        if O.iter > 500:
-            newton_integrator.gravity = (0, -9.81, 0)
+        temp_body_max_y = max(O.bodies[i].state.pos[1] for i in sphere_id)
+        temp_coord_num = utils.avgNumInteractions()
+        
+        if O.iter % 100 == 0:
+            print(O.forces.f(base_top_facet_id[2]))
+        
+        if temp_coord_num > 1.5:
+            for i in sphere_id:
+                O.bodies[i].state.vel = Vector3(0, 0, 0)
             state_index = 1
+        else:
+            utils.growParticles(1.0001)
+
             
     # gravity depostion stage (air pluviation stage)
     elif state_index == 1:
+        if O.iter % 100 == 0:
+            print(O.forces.f(base_top_facet_id[2]))
+
+        if utils.unbalancedForce() < 0.01:
+            O.pause()
+        
+    
+    # wait until the assembly is stabilized
+    elif state_index == 2:
         
         if utils.unbalancedForce() < 0.05 and O.iter > 10000:
             
@@ -350,7 +391,7 @@ def checkState():
                 
                 state_index = 2
 
-    elif  state_index == 2:
+    elif  state_index == 3:
         
         flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
         flag_pile_length = abs(temp_initial_pile_disp - O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]) >= initial_parameters["pile_height"]
