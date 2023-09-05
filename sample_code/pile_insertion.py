@@ -287,7 +287,7 @@ def exportData():
                  " Fy_cy: " + '{:> 8.2f}'.format(temp_pile_force_y) + \
                  " Fz_cy: " + '{:> 8.2f}'.format(temp_pile_force_z)
     
-    print(output_str)
+    # print(output_str)
     
     # export some global values to csv file
     output_values = [iter, state_index, temp_unbalanced_force, 
@@ -340,18 +340,22 @@ def checkState():
     # initial particle diameter expansion without gravity force
     # expanding radius 
     if state_index == 0:
-        temp_body_max_y = max(O.bodies[i].state.pos[1] for i in sphere_id)
+        temp_body_mean_vel = np.array([O.bodies[i].state.vel[1] for i in sphere_id]).mean()
         temp_coord_num = utils.avgNumInteractions()
         
         if O.iter % 100 == 0:
-            print(O.forces.f(base_top_facet_id[2]))
+            output_str = "Iter: " + str(O.iter) + \
+                         " Stage: " + str(state_index) + \
+                         " Fn: " + '{:> 5.2f}'.format(O.forces.f(base_top_facet_id[2]).norm()) + \
+                         " meanV: " + '{:> 5.2f}'.format(temp_body_mean_vel) + \
+                         " Cn: " + '{:> 5.2f}'.format(temp_coord_num) + \
+                         " inerF: " + '{:> 10.7f}'.format(O.bodies[sphere_id[-1]].state.inertia[1]) + \
+                         " mass: " + '{:> 10.7f}'.format(O.bodies[sphere_id[-1]].state.mass)
+            print(output_str)
         
-        if temp_coord_num > 1.5:
-            for i in sphere_id:
-                O.bodies[i].state.vel = Vector3(0, 0, 0)
-            state_index = 1
-        else:
-            utils.growParticles(1.0001)
+        if temp_body_mean_vel <= 0 and O.forces.f(base_top_facet_id[2]).norm() < 10:
+            utils.growParticles(1.0005)
+
 
             
     # gravity depostion stage (air pluviation stage)
