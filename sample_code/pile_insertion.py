@@ -29,7 +29,7 @@ initial_parameters = {
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
-    "sphere_size_distribution_size_ratio": 20,
+    "sphere_size_distribution_size_ratio": 30,
     "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
     "sphere_density": 2650.0,
     "manual_contact_model": True,
@@ -39,8 +39,8 @@ initial_parameters = {
     "pile_contact_normal_stiffness": 6.0e12,
     "pile_contact_stiffness_ratio": 0.25,
     "pile_contact_frictional_coeffcient": 0.5,
-    "sphere_fall_height": 0.25,
-    "sphere_pack_initial_height": 0.5,
+    "sphere_fall_height": 0.75,
+    "sphere_pack_target_height": 0.5,
     "base_box_height_ratio_to_mean_diameter": 5,
     "simulation_box_width": 0.04,
     "flag_import_existing_pack_file" : False,
@@ -50,7 +50,6 @@ initial_parameters = {
     "export_data_iter_interval" : 100,
     "local_voxel_of_interest": []
 }
-
 
 ############## Temporary Variables ##############
 state_index = 0
@@ -66,26 +65,39 @@ else:
 temp_base_box_height = temp_max_sphere_size * initial_parameters["base_box_height_ratio_to_mean_diameter"]
 
 
-temp_lower_bound = 0
-# temp_lower_bound = temp_max_sphere_size
-temp_lower_bound_y = temp_max_sphere_size / 2
-# temp_lower_bound_y = temp_lower_bound * 2 + temp_base_box_height / 2
+temp_sphere_generation_bound_lower = 0
+# temp_sphere_generation_bound_lower = temp_max_sphere_size
+temp_sphere_generation_bound_lower_y = temp_max_sphere_size / 2
+# temp_sphere_generation_bound_lower_y = temp_sphere_generation_bound_lower * 2 + temp_base_box_height / 2
 
 temp_upper_bound = initial_parameters["simulation_box_width"]
 # temp_upper_bound = initial_parameters["simulation_box_width"] - temp_max_sphere_size
-temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"]
-# temp_upper_bound_y = temp_lower_bound_y + initial_parameters["sphere_pack_initial_height"] - temp_max_sphere_size
+temp_upper_bound_y = temp_sphere_generation_bound_lower_y + initial_parameters["sphere_pack_target_height"]
+# temp_upper_bound_y = temp_sphere_generation_bound_lower_y + initial_parameters["sphere_pack_target_height"] - temp_max_sphere_size
 
 temp_pile_initial_position_x = initial_parameters["simulation_box_width"] / 2
 temp_pile_initial_position_y = temp_upper_bound_y + temp_max_sphere_size
 temp_pile_initial_position_z = temp_pile_initial_position_x
 
-temp_hsize_y = math.ceil((temp_pile_initial_position_y + initial_parameters["pile_height"]) * 10) / 10
+temp_max_fall_height = math.ceil((initial_parameters["sphere_pack_target_height"] + initial_parameters["sphere_fall_height"]) * 10) / 10
+temp_pile_top_height = math.ceil((temp_pile_initial_position_y + initial_parameters["pile_height"]) * 10) / 10
+temp_hsize_y = max(temp_max_fall_height, temp_pile_top_height)
 
 temp_pause_pile_position_y = temp_base_box_height / 2 + temp_max_sphere_size
 
 temp_initial_pile_disp = 0
 
+temp_cur_fall_y = initial_parameters["sphere_fall_height"]
+temp_fall_layer_thickness = temp_max_sphere_size * 3
+sphere_id = []
+
+
+############## Initilize periodic cell ##############
+
+O.periodic = True
+O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
+                       0, temp_hsize_y, 0,
+                       0, 0, initial_parameters["simulation_box_width"])
 
 ############## Make some directories##############
 # Result directory
@@ -142,42 +154,26 @@ base_facet_2 = utils.facet([Vector3(initial_parameters["simulation_box_width"], 
                             fixed=True,
                             wire=False,
                             material=material_facet_Id)
+"""
 top_facet_1 = utils.facet([Vector3(0, temp_pile_initial_position_y, 0), 
                              Vector3(initial_parameters["simulation_box_width"]*2, temp_pile_initial_position_y, 0),
                              Vector3(0, temp_pile_initial_position_y, initial_parameters["simulation_box_width"]*2)],
                             fixed=True,
                             wire=False,
                             material=material_facet_Id)
-base_top_facet_id = O.bodies.append([base_facet_1, base_facet_2, top_facet_1])
+"""
+base_top_facet_id = O.bodies.append([base_facet_1, base_facet_2])
 
 
 ############## Sphere ##############
+
 pack_sp = pack.SpherePack()
-
-if initial_parameters["flag_import_existing_pack_file"]:
-    pack_sp.load(str(temp_sp_file_path))
-    O.periodic = True
-else: 
-    if initial_parameters["flag_uniform_sphere_diameter"]:   
-        pack_sp.makeCloud((temp_lower_bound, temp_lower_bound_y, temp_lower_bound), 
-                        (temp_upper_bound, temp_upper_bound_y, temp_upper_bound), 
-                        rMean=initial_parameters["sphere_diameter_mean"], 
-                        rRelFuzz=initial_parameters["sphere_diameter_std_dev"],
-                        seed=1,
-                        periodic=True)
-        pack_sp.save(str(temp_sp_file_path))
-    else:
-        
-        pack_sp.makeCloud((temp_lower_bound, temp_lower_bound_y, temp_lower_bound), 
-                        (temp_upper_bound, temp_upper_bound_y, temp_upper_bound), 
-                        psdSizes=temp_sphere_size_distribution_size,
-                        psdCumm=initial_parameters["sphere_size_distribution_cumm"],
-                        seed=1,num=3000,
-                        periodic=True,)
-        
-        pack_sp.save(str(temp_sp_file_path))
-
-
+pack_sp.makeCloud((0, temp_sphere_generation_bound_lower_y, 0), 
+                  (initial_parameters["simulation_box_width"], initial_parameters["sphere_pack_target_height"]+temp_max_sphere_size, initial_parameters["simulation_box_width"]), 
+                  psdSizes=temp_sphere_size_distribution_size,
+                  psdCumm=initial_parameters["sphere_size_distribution_cumm"],
+                  seed=1,
+                  periodic=True)
 sphere_id = pack_sp.toSimulation(material=material_sphere_Id)
 
 O.periodic = True
@@ -188,15 +184,20 @@ O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
 print(len(sphere_id), "spheres are genereted")
 
 
+
 ############## Pile ##############
 if not initial_parameters["flag_import_heavy_stl_model"]:
-    stl_file_path = r"./temp/pile_v2_light.stl"
+    stl_file_path = r"../temp/pile_v2_light.stl"
     
 else:
-    stl_file_path = r"./temp/pile_v1_heavy.stl"
+    stl_file_path = r"../temp/pile_v1_heavy.stl"
+
+stl_file_path = Path(stl_file_path).resolve()
+print("Pile stl is found in", str(stl_file_path))
+stl_file_path = str(stl_file_path)
 
 pile_facets = ymport.stl(stl_file_path, fixed=True, 
-                        wire=True, noBound=False, 
+                        wire=True, noBound=True, 
                         material=material_facet_Id, 
                         scale=1/1000, 
                         shift=Vector3(temp_pile_initial_position_x, temp_pile_initial_position_y, temp_pile_initial_position_z))
@@ -254,7 +255,7 @@ O.engines = [
         [Ip2_FrictMat_FrictMat_FrictPhys()],
         [Law2_ScGeom_FrictPhys_CundallStrack()]
     ),
-    NewtonIntegrator(damping=0.2, gravity=(0, -9.81, 0)),
+    NewtonIntegrator(damping=0.2, gravity=(0, -9.81*1000, 0)),
     PyRunner(iterPeriod=initial_parameters["export_data_iter_interval"], command="exportData()"),
     PyRunner(iterPeriod=1, command="checkState()")
 ]
@@ -335,14 +336,34 @@ def calcuratePileMechanicalValues(debug=False):
 
 
 def checkState():
-    global state_index, temp_initial_pile_disp
+    global state_index, temp_initial_pile_disp, temp_cur_fall_y, sphere_id
 
     # initial particle diameter expansion without gravity force
     # expanding radius 
     if state_index == 0:
-        temp_body_mean_vel = np.array([O.bodies[i].state.vel[1] for i in sphere_id]).mean()
-        temp_coord_num = utils.avgNumInteractions()
-        
+        if O.iter % 100 == 0:
+            temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+            temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+            temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+            temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+                        
+            if temp_sphere_data[3, :].mean() >= 3:
+                state_index = 1
+            """
+            if  temp_sphere_data[2, :].max() > initial_parameters["sphere_pack_target_height"] - temp_max_sphere_size and temp_sphere_data[3, :].mean() >= 3:
+                O.pause()
+            elif temp_sphere_data[2, :].max() < initial_parameters["sphere_pack_target_height"] + temp_max_sphere_size and temp_sphere_data[1, :].mean() < 0:
+                temp_grow_ratio = 1.01 - (1.01 - 1.000001) *  temp_sphere_data[2, :].max() / (initial_parameters["sphere_pack_target_height"] + temp_max_sphere_size)
+                utils.growParticles(temp_grow_ratio)
+            """
+            """
+            print(O.iter, 
+                  '{:> 7.5f}'.format(temp_sphere_data[2, :].max()), 
+                  '{:> 7.5f}'.format(temp_sphere_data[3, :].mean()),
+                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()),
+                  '{:> 10.8f}'.format(temp_grow_ratio))
+            """
+        """
         if O.iter % 100 == 0:
             output_str = "Iter: " + str(O.iter) + \
                          " Stage: " + str(state_index) + \
@@ -352,12 +373,12 @@ def checkState():
                          " inerF: " + '{:> 10.7f}'.format(O.bodies[sphere_id[-1]].state.inertia[1]) + \
                          " mass: " + '{:> 10.7f}'.format(O.bodies[sphere_id[-1]].state.mass)
             print(output_str)
-        
+        """
+        """
         if temp_body_mean_vel <= 0 and O.forces.f(base_top_facet_id[2]).norm() < 10:
             utils.growParticles(1.0005)
+        """
 
-
-            
     # gravity depostion stage (air pluviation stage)
     elif state_index == 1:
         if O.iter % 100 == 0:

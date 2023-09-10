@@ -37,7 +37,7 @@ initial_parameters = {
     "cyclic_shear_strain_amplitude" : 0.002,
     "cyclic_shear_stress_amplitude" : 15e3,
     "cyclic_shear_num_cycle_target" : 100,
-    "cyclic_shear_double_amplitude_target" : 0.5,
+    "cyclic_shear_double_amplitude_target" : 0.,
     "output_txt_iter_interval" : 10,
     "flag_output_VTK" : True,
     "output_VTK_iter_interval" : 100
