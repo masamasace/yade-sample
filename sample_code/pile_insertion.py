@@ -1,7 +1,7 @@
 
 
 from __future__ import print_function
-from yade import pack, plot, ymport
+from yade import pack, plot, ymport, export
 from yade.gridpfacet import *
 import numpy as np
 import datetime
@@ -348,6 +348,15 @@ def checkState():
             temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
                         
             if temp_sphere_data[3, :].mean() >= 3:
+                export.text(str(temp_sp_file_path))
+                
+                temp_num_layers = int(math.ceil(initial_parameters["sphere_pack_target_height"] / temp_sphere_data[2, :].max()))
+                for i in range(temp_num_layers):
+                    print((0, temp_sphere_data[2, :].max()*(i+1), 0))
+                    temp_additional_spheres = ymport.text(str(temp_sp_file_path), shift=Vector3(0, temp_sphere_data[2, :].max()*(i+1), 0), material=material_sphere_Id)
+                    temp_additional_spheres_id = O.bodies.append(temp_additional_spheres)
+                    sphere_id.append(temp_additional_spheres_id)
+                    
                 state_index = 1
             """
             if  temp_sphere_data[2, :].max() > initial_parameters["sphere_pack_target_height"] - temp_max_sphere_size and temp_sphere_data[3, :].mean() >= 3:
@@ -356,13 +365,12 @@ def checkState():
                 temp_grow_ratio = 1.01 - (1.01 - 1.000001) *  temp_sphere_data[2, :].max() / (initial_parameters["sphere_pack_target_height"] + temp_max_sphere_size)
                 utils.growParticles(temp_grow_ratio)
             """
-            """
+            
             print(O.iter, 
                   '{:> 7.5f}'.format(temp_sphere_data[2, :].max()), 
                   '{:> 7.5f}'.format(temp_sphere_data[3, :].mean()),
-                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()),
-                  '{:> 10.8f}'.format(temp_grow_ratio))
-            """
+                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()))
+            
         """
         if O.iter % 100 == 0:
             output_str = "Iter: " + str(O.iter) + \
@@ -381,10 +389,7 @@ def checkState():
 
     # gravity depostion stage (air pluviation stage)
     elif state_index == 1:
-        if O.iter % 100 == 0:
-            print(O.forces.f(base_top_facet_id[2]))
-
-        if utils.unbalancedForce() < 0.01:
+        if O.iter % 100 == 0 and utils.unbalancedForce() < 0.01:
             O.pause()
         
     
