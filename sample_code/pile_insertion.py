@@ -10,7 +10,7 @@ import os
 import sys
 import json
 import math
-import collections
+
 
 # Dividing line to make the output more comprehensive
 print("")
@@ -21,15 +21,49 @@ print("Start simulation started at " +
       dt_start.strftime('%Y/%m/%d %H:%M:%S.%f'))
 
 
+############## Pre-difined Subroutines ##############
+
+def calcurateVoxelRegion(center_line_x_of_interest_local_voxel, size_of_interest_local_voxel, sphere_pack_target_Y, simulation_box_width, total_num_of_local_voxel=-1, debug=False):
+
+    temp_num_voxel_along_line = int(sphere_pack_target_Y // size_of_interest_local_voxel)
+    temp_voxel_y_min = [y*size_of_interest_local_voxel for y in range(temp_num_voxel_along_line)]
+    
+    if total_num_of_local_voxel != -1:
+        temp_voxel_y_min_id = list(np.linspace(0, len(temp_voxel_y_min), total_num_of_local_voxel + 2).astype('int32')[1:-1])
+    else:
+        temp_voxel_y_min_id = list(range(len(temp_voxel_y_min)))
+        
+    target_region = []
+    
+    for i in range(len(center_line_x_of_interest_local_voxel)):
+        for temp_voxel_y_min_id_each in temp_voxel_y_min_id:
+            target_region_each_x_min = center_line_x_of_interest_local_voxel[i] - size_of_interest_local_voxel / 2
+            target_region_each_x_max = center_line_x_of_interest_local_voxel[i] + size_of_interest_local_voxel / 2
+            target_region_each_y_min = temp_voxel_y_min[temp_voxel_y_min_id_each]
+            target_region_each_y_max = temp_voxel_y_min[temp_voxel_y_min_id_each] + size_of_interest_local_voxel
+            target_region_each_z_min = simulation_box_width / 2 - size_of_interest_local_voxel / 2
+            target_region_each_z_max = simulation_box_width / 2 + size_of_interest_local_voxel / 2
+            target_region_each = [[target_region_each_x_min, target_region_each_y_min, target_region_each_z_min],
+                                  [target_region_each_x_max, target_region_each_y_max, target_region_each_z_max]]
+            target_region.append(target_region_each)
+    
+    print(len(target_region), "regional voxels are created:")
+    for target_region_each in target_region:
+        print(target_region_each)
+    
+        
+    return target_region
+
+
 ############## Constants ##############
 initial_parameters = {
     "pile_height": 0.3,            # Temporary value to be updated after loading stl file
-    "pile_insertion_velocity": -0.02,
+    "pile_insertion_velocity": -0.2,
     "flag_uniform_sphere_diameter": False,
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
-    "sphere_size_distribution_size_ratio": 30,
+    "sphere_size_distribution_size_ratio": 20,
     "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
     "sphere_density": 2650.0,
     "manual_contact_model": True,
@@ -39,16 +73,17 @@ initial_parameters = {
     "pile_contact_normal_stiffness": 6.0e12,
     "pile_contact_stiffness_ratio": 0.25,
     "pile_contact_frictional_coeffcient": 0.5,
-    "sphere_fall_height": 0.75,
-    "sphere_pack_target_height": 0.5,
-    "base_box_height_ratio_to_mean_diameter": 5,
+    "sphere_pack_target_Y": 0.5,
+    "base_facet_Y_ratio_to_mean_diameter": 5,
     "simulation_box_width": 0.04,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": True,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 50,
-    "export_data_iter_interval" : 100,
-    "local_voxel_of_interest": []
+    "export_data_iter_interval" : 1000,
+    "center_line_x_of_interest_local_voxel": [0.01],
+    "size_of_interest_local_voxel": 0.01,
+    "total_num_of_local_voxel": 4
 }
 
 ############## Temporary Variables ##############
@@ -62,34 +97,36 @@ else:
     temp_max_sphere_size = max(temp_sphere_size_distribution_size)
     temp_min_sphere_size = min(temp_sphere_size_distribution_size)
 
-temp_base_box_height = temp_max_sphere_size * initial_parameters["base_box_height_ratio_to_mean_diameter"]
+temp_base_facet_Y = temp_max_sphere_size / 2
 
-
-temp_sphere_generation_bound_lower = 0
-# temp_sphere_generation_bound_lower = temp_max_sphere_size
-temp_sphere_generation_bound_lower_y = temp_max_sphere_size / 2
-# temp_sphere_generation_bound_lower_y = temp_sphere_generation_bound_lower * 2 + temp_base_box_height / 2
+temp_sphere_generation_bound_lower_xz = 0
+# temp_sphere_generation_bound_lower_xz = temp_max_sphere_size
+temp_sphere_generation_bound_lower_y = temp_base_facet_Y + temp_max_sphere_size / 2
+# temp_sphere_generation_bound_lower_y = temp_sphere_generation_bound_lower * 2 + temp_base_facet_height / 2
 
 temp_upper_bound = initial_parameters["simulation_box_width"]
 # temp_upper_bound = initial_parameters["simulation_box_width"] - temp_max_sphere_size
-temp_upper_bound_y = temp_sphere_generation_bound_lower_y + initial_parameters["sphere_pack_target_height"]
-# temp_upper_bound_y = temp_sphere_generation_bound_lower_y + initial_parameters["sphere_pack_target_height"] - temp_max_sphere_size
+temp_upper_bound_y = temp_sphere_generation_bound_lower_y + initial_parameters["sphere_pack_target_Y"]
+# temp_upper_bound_y = temp_sphere_generation_bound_lower_y + initial_parameters["sphere_pack_target_Y"] - temp_max_sphere_size
 
 temp_pile_initial_position_x = initial_parameters["simulation_box_width"] / 2
 temp_pile_initial_position_y = temp_upper_bound_y + temp_max_sphere_size
 temp_pile_initial_position_z = temp_pile_initial_position_x
 
-temp_max_fall_height = math.ceil((initial_parameters["sphere_pack_target_height"] + initial_parameters["sphere_fall_height"]) * 10) / 10
-temp_pile_top_height = math.ceil((temp_pile_initial_position_y + initial_parameters["pile_height"]) * 10) / 10
-temp_hsize_y = max(temp_max_fall_height, temp_pile_top_height)
+temp_pile_top_height = temp_pile_initial_position_y + initial_parameters["pile_height"]
+temp_pile_top_height_ceiled = math.ceil(temp_pile_top_height * 10) / 10
+temp_hsize_y = temp_pile_top_height_ceiled
 
-temp_pause_pile_position_y = temp_base_box_height / 2 + temp_max_sphere_size
+temp_voxel_region = calcurateVoxelRegion(initial_parameters["center_line_x_of_interest_local_voxel"], 
+                                         initial_parameters["size_of_interest_local_voxel"],
+                                         initial_parameters["sphere_pack_target_Y"],
+                                         initial_parameters["simulation_box_width"],
+                                         total_num_of_local_voxel=initial_parameters["total_num_of_local_voxel"],
+                                         debug=True)
 
-temp_initial_pile_disp = 0
-
-temp_cur_fall_y = initial_parameters["sphere_fall_height"]
-temp_fall_layer_thickness = temp_max_sphere_size * 3
 sphere_id = []
+
+temp_prev_stage_iter = 0
 
 
 ############## Initilize periodic cell ##############
@@ -132,44 +169,47 @@ if initial_parameters["manual_contact_model"]:
                                density=initial_parameters["sphere_density"])
     material_sphere_Id = O.materials.append(frict_mat_sphere)
     
-    frict_mat_facet = FrictMat(young=initial_parameters["pile_contact_normal_stiffness"], 
+    frict_mat_facet_pile = FrictMat(young=initial_parameters["pile_contact_normal_stiffness"], 
                               poisson=initial_parameters["pile_contact_stiffness_ratio"],
                               frictionAngle=initial_parameters["pile_contact_frictional_coeffcient"], 
                               density=1000)
-    material_facet_Id = O.materials.append(frict_mat_facet)
+    material_facet_pile_Id = O.materials.append(frict_mat_facet_pile)
+    
+    frict_mat_facet_base = FrictMat(young=initial_parameters["pile_contact_normal_stiffness"] * 10, 
+                              poisson=initial_parameters["pile_contact_stiffness_ratio"] * 10,
+                              frictionAngle=initial_parameters["pile_contact_frictional_coeffcient"] * 10, 
+                              density=1000)
+    material_facet_base_Id = O.materials.append(frict_mat_facet_base)
 
 
 ############## Base Boundary Box ##############
-# utils.wallを使う方法もある
+temp_base_facet_x_min = -temp_max_sphere_size / 2
+temp_base_facet_z_min = temp_base_facet_x_min
+temp_base_facet_x_max = temp_max_sphere_size / 2 * math.sqrt(2) + 2 * initial_parameters["simulation_box_width"]
+temp_base_facet_z_max = temp_base_facet_x_max
 
-base_facet_1 = utils.facet([Vector3(0, 0, 0), 
-                             Vector3(initial_parameters["simulation_box_width"], 0, 0),
-                             Vector3(0, 0, initial_parameters["simulation_box_width"])],
+base_facet_1 = utils.facet([Vector3(temp_base_facet_x_min, temp_base_facet_Y, temp_base_facet_z_min), 
+                             Vector3(temp_base_facet_x_max, temp_base_facet_Y, temp_base_facet_z_min),
+                             Vector3(temp_base_facet_x_min, temp_base_facet_Y, temp_base_facet_z_max)],
                             fixed=True,
                             wire=False,
-                            material=material_facet_Id)
-base_facet_2 = utils.facet([Vector3(initial_parameters["simulation_box_width"], 0, initial_parameters["simulation_box_width"]), 
-                             Vector3(initial_parameters["simulation_box_width"], 0, 0),
-                             Vector3(0, 0, initial_parameters["simulation_box_width"])],
+                            material=material_facet_base_Id)
+""
+"""base_facet_2 = utils.facet([Vector3(initial_parameters["simulation_box_width"], temp_base_facet_Y, initial_parameters["simulation_box_width"]), 
+                             Vector3(initial_parameters["simulation_box_width"], temp_base_facet_Y, 0),
+                             Vector3(0, temp_base_facet_Y, initial_parameters["simulation_box_width"])],
                             fixed=True,
                             wire=False,
-                            material=material_facet_Id)
-"""
-top_facet_1 = utils.facet([Vector3(0, temp_pile_initial_position_y, 0), 
-                             Vector3(initial_parameters["simulation_box_width"]*2, temp_pile_initial_position_y, 0),
-                             Vector3(0, temp_pile_initial_position_y, initial_parameters["simulation_box_width"]*2)],
-                            fixed=True,
-                            wire=False,
-                            material=material_facet_Id)
-"""
-base_top_facet_id = O.bodies.append([base_facet_1, base_facet_2])
+                            material=material_facet_base_Id)"""
+
+base_top_facet_id = O.bodies.append([base_facet_1])
 
 
 ############## Sphere ##############
 
 pack_sp = pack.SpherePack()
-pack_sp.makeCloud((0, temp_sphere_generation_bound_lower_y, 0), 
-                  (initial_parameters["simulation_box_width"], initial_parameters["sphere_pack_target_height"]+temp_max_sphere_size, initial_parameters["simulation_box_width"]), 
+pack_sp.makeCloud((temp_sphere_generation_bound_lower_xz, temp_sphere_generation_bound_lower_y, temp_sphere_generation_bound_lower_xz), 
+                  (initial_parameters["simulation_box_width"], initial_parameters["sphere_pack_target_Y"]+temp_max_sphere_size, initial_parameters["simulation_box_width"]), 
                   psdSizes=temp_sphere_size_distribution_size,
                   psdCumm=initial_parameters["sphere_size_distribution_cumm"],
                   seed=1,
@@ -184,13 +224,12 @@ O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
 print(len(sphere_id), "spheres are genereted")
 
 
-
 ############## Pile ##############
 if not initial_parameters["flag_import_heavy_stl_model"]:
-    stl_file_path = r"../temp/pile_v2_light.stl"
+    stl_file_path = r"../stl/pile_v2_light.stl"
     
 else:
-    stl_file_path = r"../temp/pile_v1_heavy.stl"
+    stl_file_path = r"../stl/pile_v1_heavy.stl"
 
 stl_file_path = Path(stl_file_path).resolve()
 print("Pile stl is found in", str(stl_file_path))
@@ -198,7 +237,7 @@ stl_file_path = str(stl_file_path)
 
 pile_facets = ymport.stl(stl_file_path, fixed=True, 
                         wire=True, noBound=True, 
-                        material=material_facet_Id, 
+                        material=material_facet_pile_Id, 
                         scale=1/1000, 
                         shift=Vector3(temp_pile_initial_position_x, temp_pile_initial_position_y, temp_pile_initial_position_z))
 print(len(pile_facets), "facets of pile model are imported")
@@ -233,16 +272,15 @@ O.cell.hSize = Matrix3(initial_parameters["simulation_box_width"], 0, 0,
 
 ############## Parameter Check ##############
 print("Simulation box width:", '{:> 4.2f}'.format(initial_parameters["simulation_box_width"]))
-print("Base box height:", '{:> 4.2f}'.format(temp_base_box_height))
+print("Base Facet Y:", '{:> 4.2f}'.format(temp_base_facet_Y))
 print("Initial Y of top of sphere pack:", '{:> 4.2f}'.format(temp_upper_bound_y))
 print("Initial Y of bottom of pile:", '{:> 4.2f}'.format(temp_pile_initial_position_y))
 print("Initial Y of top of pile:", '{:> 4.2f}'.format(pile_facets_pos_Y_top))
 print("Simulation box height:", '{:> 4.2f}'.format(temp_hsize_y))
-print("Final Y of bottom of pile:", '{:> 4.2f}'.format(temp_pause_pile_position_y))
 
 
 ############## Engine ##############
-O.dt = .5 * PWaveTimeStep()
+O.dt = PWaveTimeStep() / 2
 
 # "allowBiggerThanPeriod=True" in InsertionSortCollider is needed to avoid spheres from falling down out of the box
 # Though this is periodical simulation, Bo1_Box_Aabb is still needed to prevent spheres from falling out of the bottom base
@@ -255,7 +293,7 @@ O.engines = [
         [Ip2_FrictMat_FrictMat_FrictPhys()],
         [Law2_ScGeom_FrictPhys_CundallStrack()]
     ),
-    NewtonIntegrator(damping=0.2, gravity=(0, -9.81*1000, 0)),
+    NewtonIntegrator(damping=0.2, gravity=(0, -9.81, 0)),
     PyRunner(iterPeriod=initial_parameters["export_data_iter_interval"], command="exportData()"),
     PyRunner(iterPeriod=1, command="checkState()")
 ]
@@ -277,26 +315,44 @@ def exportData():
     temp_pile_position_y, temp_pile_force_x, temp_pile_force_y, temp_pile_force_z = calcuratePileMechanicalValues()
     temp_unbalanced_force = utils.unbalancedForce()
     temp_friction_angle = O.materials[0].frictionAngle
-    temp_coord_num = utils.avgNumInteractions()
+    
+    temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+    temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+    temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+    temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+    
+    # export some values to matplotlib figure
+    if state_index <= 2:
+        temp_pile_position_y = 0
+
+    temp_voxel_porosity = [utils.voxelPorosity(start=temp_voxel_region_each[0], end=temp_voxel_region_each[1]) for temp_voxel_region_each in temp_voxel_region]
+
+    if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
+        temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
+    else:
+        temp_maxY_with_3cn = 0
         
     output_str = "Iter: " + str(iter) + \
                  " Stage: " + str(state_index) + \
                  " UnF: " + '{:> 5.2f}'.format(temp_unbalanced_force) + \
-                 " Cn: " + '{:> 6.3f}'.format(temp_coord_num) + \
-                 " Pos_cy: " + '{:> 6.3f}'.format(temp_pile_position_y) + \
-                 " Fx_cy: " + '{:> 8.2f}'.format(temp_pile_force_x) + \
-                 " Fy_cy: " + '{:> 8.2f}'.format(temp_pile_force_y) + \
-                 " Fz_cy: " + '{:> 8.2f}'.format(temp_pile_force_z)
+                 " Cn: " + '{:> 7.4f}'.format(temp_sphere_data[3, :].mean()) + \
+                 " Y_pi " + '{:> 7.4f}'.format(temp_pile_position_y) + \
+                 " MaxY_sp: " + '{:> 7.4f}'.format(temp_sphere_data[2, :].max()) + \
+                 " MaxY_sp_cn3: " + '{:> 7.4f}'.format(temp_maxY_with_3cn) + \
+                 " Fx_pi: " + '{:> 8.2f}'.format(temp_pile_force_x) + \
+                 " Fy_pi: " + '{:> 8.2f}'.format(temp_pile_force_y) + \
+                 " Fz_pi: " + '{:> 8.2f}'.format(temp_pile_force_z)
     
-    # print(output_str)
+    print(output_str)
     
     # export some global values to csv file
     output_values = [iter, state_index, temp_unbalanced_force, 
-                     temp_friction_angle, temp_coord_num,
-                     temp_pile_position_y,
+                     temp_friction_angle, temp_sphere_data[3, :].mean(),
+                     temp_pile_position_y, temp_sphere_data[2, :].max(),
+                     temp_maxY_with_3cn,
                      temp_pile_force_x, 
                      temp_pile_force_y,
-                     temp_pile_force_z]
+                     temp_pile_force_z] + temp_voxel_porosity
 
     output_values_str = ""
 
@@ -307,17 +363,18 @@ def exportData():
     with open(output_file_path, 'a') as f:
         f.write(output_values_str)
         
-    # export some values to matplotlib figure
-    if state_index != 2:
-        temp_pile_position_y = None
-        
     plot.addData(i=iter,
-                 UnF=temp_unbalanced_force,
+                 Cn=temp_sphere_data[3, :].mean(),
+                 maxY_sp=temp_sphere_data[2, :].max(),
+                 maxY_sp_3cn=temp_maxY_with_3cn,
                  Pos=temp_pile_position_y,
-                 Fy_cy=temp_pile_force_y)
+                 Fy_pi=temp_pile_force_y,
+                 VoxPo_1=temp_voxel_porosity[0],
+                 VoxPo_2=temp_voxel_porosity[int(len(temp_voxel_porosity)/3)],
+                 VoxPo_3=temp_voxel_porosity[int(len(temp_voxel_porosity)/3*2)])
     
     # export VTK file
-    if initial_parameters["flag_output_VTK"] and state_index != 0:
+    if initial_parameters["flag_output_VTK"] and state_index >= 2:
         vtk_recorder()
 
 
@@ -333,104 +390,117 @@ def calcuratePileMechanicalValues(debug=False):
     
     temp_pile_position_y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
     return (temp_pile_position_y, pile_force[0], pile_force[1], pile_force[2])
-
+    
 
 def checkState():
-    global state_index, temp_initial_pile_disp, temp_cur_fall_y, sphere_id
+    global state_index, temp_initial_pile_disp, sphere_id, temp_prev_stage_iter
 
-    # initial particle diameter expansion without gravity force
-    # expanding radius 
+    # initial gravity deposition
     if state_index == 0:
         if O.iter % 100 == 0:
             temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
             temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
             temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
             temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+            
+            if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
+                temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
+            else:
+                temp_maxY_with_3cn = 0
+            
+            temp_sphere_id_positive_vel = temp_sphere_data[0, temp_sphere_data[1, :] > 0]
+            
+            for temp_sphere_id_positive_vel_each in temp_sphere_id_positive_vel:
+                O.bodies[int(temp_sphere_id_positive_vel_each)].state.vel[1] = 0
                         
-            if temp_sphere_data[3, :].mean() >= 3:
+            if temp_sphere_data[2, :].max() == temp_maxY_with_3cn and temp_sphere_data[3, :].mean() > 3:
                 export.text(str(temp_sp_file_path))
                 
-                temp_num_layers = int(math.ceil(initial_parameters["sphere_pack_target_height"] / temp_sphere_data[2, :].max()))
+                temp_num_layers = int(math.ceil(initial_parameters["sphere_pack_target_Y"] / temp_sphere_data[2, :].max()))
                 for i in range(temp_num_layers):
-                    print((0, temp_sphere_data[2, :].max()*(i+1), 0))
                     temp_additional_spheres = ymport.text(str(temp_sp_file_path), shift=Vector3(0, temp_sphere_data[2, :].max()*(i+1), 0), material=material_sphere_Id)
                     temp_additional_spheres_id = O.bodies.append(temp_additional_spheres)
-                    sphere_id.append(temp_additional_spheres_id)
+                    sphere_id.extend(temp_additional_spheres_id)
                     
+                print("Some spheres are added. now", len(sphere_id), "spheres exist")
+                    
+                
+                temp_prev_stage_iter = O.iter
                 state_index = 1
             """
-            if  temp_sphere_data[2, :].max() > initial_parameters["sphere_pack_target_height"] - temp_max_sphere_size and temp_sphere_data[3, :].mean() >= 3:
-                O.pause()
-            elif temp_sphere_data[2, :].max() < initial_parameters["sphere_pack_target_height"] + temp_max_sphere_size and temp_sphere_data[1, :].mean() < 0:
-                temp_grow_ratio = 1.01 - (1.01 - 1.000001) *  temp_sphere_data[2, :].max() / (initial_parameters["sphere_pack_target_height"] + temp_max_sphere_size)
-                utils.growParticles(temp_grow_ratio)
-            """
-            
-            print(O.iter, 
+            print(O.iter, state_index,
                   '{:> 7.5f}'.format(temp_sphere_data[2, :].max()), 
                   '{:> 7.5f}'.format(temp_sphere_data[3, :].mean()),
-                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()))
+                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()),
+                  '{:> 7.5f}'.format(temp_maxY_with_3cn))
+            """
             
-        """
-        if O.iter % 100 == 0:
-            output_str = "Iter: " + str(O.iter) + \
-                         " Stage: " + str(state_index) + \
-                         " Fn: " + '{:> 5.2f}'.format(O.forces.f(base_top_facet_id[2]).norm()) + \
-                         " meanV: " + '{:> 5.2f}'.format(temp_body_mean_vel) + \
-                         " Cn: " + '{:> 5.2f}'.format(temp_coord_num) + \
-                         " inerF: " + '{:> 10.7f}'.format(O.bodies[sphere_id[-1]].state.inertia[1]) + \
-                         " mass: " + '{:> 10.7f}'.format(O.bodies[sphere_id[-1]].state.mass)
-            print(output_str)
-        """
-        """
-        if temp_body_mean_vel <= 0 and O.forces.f(base_top_facet_id[2]).norm() < 10:
-            utils.growParticles(1.0005)
-        """
 
-    # gravity depostion stage (air pluviation stage)
+    # copy particle assemblies to make the layer height equal to the target height
     elif state_index == 1:
-        if O.iter % 100 == 0 and utils.unbalancedForce() < 0.01:
-            O.pause()
+        if O.iter % 100 == 0 and O.iter - temp_prev_stage_iter > 10000:
+            temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+            temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+            temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+            temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+            
+            temp_sphere_id_positive_vel = temp_sphere_data[0, temp_sphere_data[1, :] > 0]
+            
+            for temp_sphere_id_positive_vel_each in temp_sphere_id_positive_vel:
+                O.bodies[int(temp_sphere_id_positive_vel_each)].state.vel[1] = 0
+            
+            if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
+                temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
+            else:
+                temp_maxY_with_3cn = 0
+                
+            if temp_maxY_with_3cn > initial_parameters["sphere_pack_target_Y"] and temp_sphere_data[3, :].mean() > 3:
+                temp_unused_sphere_id = temp_sphere_data[0, temp_sphere_data[2, :] > initial_parameters["sphere_pack_target_Y"]]
+                for temp_unused_sphere_id_each in temp_unused_sphere_id:
+                     O.bodies.erase(int(temp_unused_sphere_id_each))
+                     sphere_id.remove(int(temp_unused_sphere_id_each))
+                
+                print(len(temp_unused_sphere_id), " spheres are deleted")
+                print("Now", len(sphere_id), "spheres exist")
+                
+                temp_prev_stage_iter = O.iter
+                state_index = 2
+            
+            """
+            print(O.iter, state_index,
+                  '{:> 7.5f}'.format(temp_sphere_data[2, :].max()), 
+                  '{:> 7.5f}'.format(temp_sphere_data[3, :].mean()),
+                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()),
+                  '{:> 7.5f}'.format(temp_maxY_with_3cn))
+            """
         
     
-    # wait until the assembly is stabilized
     elif state_index == 2:
+        temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
         
-        if utils.unbalancedForce() < 0.05 and O.iter > 10000:
+        
+        for pile_facet_id in pile_facet_data[:, 0]:
+            O.bodies[int(pile_facet_id)].bounded = True
+            O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
+            O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
+                                    
+        state_index = 3
+
+    elif state_index == 3:
+        
+        if O.iter % 100 == 0:
+            temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
             
-            temp_sphere_velocity_max = max(O.bodies[i].state.vel.norm() for i in range(sphere_id_max))
-            
-            if temp_sphere_velocity_max < 0.1:
-                temp_body_max_y = max(O.bodies[i].state.pos[1] for i in range(sphere_id_max))
-                print("Highest Y position: ", '{:> 4.2f}'.format(temp_body_max_y))
-                            
-                temp_body_max_y += temp_max_sphere_size 
-                temp_initial_pile_disp = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
-                
-                temp_offset = temp_initial_pile_disp - temp_body_max_y
-                
-                for pile_facet_id in pile_facet_data[:, 0]:
-                    O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
-                    O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
-                    
-                    temp_pile_facet_pos_each = O.bodies[int(pile_facet_id)].state.pos
-                    temp_pile_facet_pos_each[1] -= temp_offset 
-                    O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
-                
-                temp_initial_pile_disp = temp_body_max_y
-                
-                state_index = 2
-
-    elif  state_index == 3:
+            flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
+            flag_pile_length = (temp_sphere_Y.max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
         
-        flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
-        flag_pile_length = abs(temp_initial_pile_disp - O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]) >= initial_parameters["pile_height"]
-        
-        if flag_bottom_reached or flag_pile_length:
-            O.pause()
+            if flag_bottom_reached or flag_pile_length:
+                O.pause()
 
 
-plot.plots = {"i": ("UnF"),
-              "Fy_cy ": ("Pos")}
+plot.plots = {"i": ("maxY_sp", "maxY_sp_3cn"),
+              " i": ("VoxPo_1","VoxPo_2","VoxPo_3"),
+              "i ": ("Cn"),
+              "Fy_pi": ("Pos")}
 
 plot.plot()
