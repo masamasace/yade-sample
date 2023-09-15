@@ -21,40 +21,6 @@ print("Start simulation started at " +
       dt_start.strftime('%Y/%m/%d %H:%M:%S.%f'))
 
 
-############## Pre-difined Subroutines ##############
-
-def calcurateVoxelRegion(center_line_x_of_interest_local_voxel, size_of_interest_local_voxel, sphere_pack_target_Y, simulation_box_width, total_num_of_local_voxel=-1, debug=False):
-
-    temp_num_voxel_along_line = int(sphere_pack_target_Y // size_of_interest_local_voxel)
-    temp_voxel_y_min = [y*size_of_interest_local_voxel for y in range(temp_num_voxel_along_line)]
-    
-    if total_num_of_local_voxel != -1:
-        temp_voxel_y_min_id = list(np.linspace(0, len(temp_voxel_y_min), total_num_of_local_voxel + 2).astype('int32')[1:-1])
-    else:
-        temp_voxel_y_min_id = list(range(len(temp_voxel_y_min)))
-        
-    target_region = []
-    
-    for i in range(len(center_line_x_of_interest_local_voxel)):
-        for temp_voxel_y_min_id_each in temp_voxel_y_min_id:
-            target_region_each_x_min = center_line_x_of_interest_local_voxel[i] - size_of_interest_local_voxel / 2
-            target_region_each_x_max = center_line_x_of_interest_local_voxel[i] + size_of_interest_local_voxel / 2
-            target_region_each_y_min = temp_voxel_y_min[temp_voxel_y_min_id_each]
-            target_region_each_y_max = temp_voxel_y_min[temp_voxel_y_min_id_each] + size_of_interest_local_voxel
-            target_region_each_z_min = simulation_box_width / 2 - size_of_interest_local_voxel / 2
-            target_region_each_z_max = simulation_box_width / 2 + size_of_interest_local_voxel / 2
-            target_region_each = [[target_region_each_x_min, target_region_each_y_min, target_region_each_z_min],
-                                  [target_region_each_x_max, target_region_each_y_max, target_region_each_z_max]]
-            target_region.append(target_region_each)
-    
-    print(len(target_region), "regional voxels are created:")
-    for target_region_each in target_region:
-        print(target_region_each)
-    
-        
-    return target_region
-
-
 ############## Constants ##############
 initial_parameters = {
     "pile_height": 0.3,            # Temporary value to be updated after loading stl file
@@ -63,7 +29,7 @@ initial_parameters = {
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
-    "sphere_size_distribution_size_ratio": 20,
+    "sphere_size_distribution_size_ratio": 60,
     "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
     "sphere_density": 2650.0,
     "manual_contact_model": True,
@@ -75,15 +41,12 @@ initial_parameters = {
     "pile_contact_frictional_coeffcient": 0.5,
     "sphere_pack_target_Y": 0.5,
     "base_facet_Y_ratio_to_mean_diameter": 5,
-    "simulation_box_width": 0.04,
+    "simulation_box_width": 0.05,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": True,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 50,
     "export_data_iter_interval" : 1000,
-    "center_line_x_of_interest_local_voxel": [0.01],
-    "size_of_interest_local_voxel": 0.01,
-    "total_num_of_local_voxel": 4
 }
 
 ############## Temporary Variables ##############
@@ -116,13 +79,6 @@ temp_pile_initial_position_z = temp_pile_initial_position_x
 temp_pile_top_height = temp_pile_initial_position_y + initial_parameters["pile_height"]
 temp_pile_top_height_ceiled = math.ceil(temp_pile_top_height * 10) / 10
 temp_hsize_y = temp_pile_top_height_ceiled
-
-temp_voxel_region = calcurateVoxelRegion(initial_parameters["center_line_x_of_interest_local_voxel"], 
-                                         initial_parameters["size_of_interest_local_voxel"],
-                                         initial_parameters["sphere_pack_target_Y"],
-                                         initial_parameters["simulation_box_width"],
-                                         total_num_of_local_voxel=initial_parameters["total_num_of_local_voxel"],
-                                         debug=True)
 
 sphere_id = []
 
@@ -309,7 +265,7 @@ vtk_recorder = VTKRecorder(fileName=str(output_VTK_folder_path)+'/vtk-', recorde
 
 ############## Subroutine ##############
 def exportData():
-    global state_index
+    global state_index, sphere_id
     
     iter = O.iter
     temp_pile_position_y, temp_pile_force_x, temp_pile_force_y, temp_pile_force_z = calcuratePileMechanicalValues()
@@ -322,10 +278,9 @@ def exportData():
     temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
     
     # export some values to matplotlib figure
-    if state_index <= 2:
+    if state_index <= 1:
         temp_pile_position_y = 0
 
-    temp_voxel_porosity = [utils.voxelPorosity(start=temp_voxel_region_each[0], end=temp_voxel_region_each[1]) for temp_voxel_region_each in temp_voxel_region]
 
     if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
         temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
@@ -352,8 +307,8 @@ def exportData():
                      temp_maxY_with_3cn,
                      temp_pile_force_x, 
                      temp_pile_force_y,
-                     temp_pile_force_z] + temp_voxel_porosity
-
+                     temp_pile_force_z]
+                     
     output_values_str = ""
 
     for temp in output_values:
@@ -368,10 +323,7 @@ def exportData():
                  maxY_sp=temp_sphere_data[2, :].max(),
                  maxY_sp_3cn=temp_maxY_with_3cn,
                  Pos=temp_pile_position_y,
-                 Fy_pi=temp_pile_force_y,
-                 VoxPo_1=temp_voxel_porosity[0],
-                 VoxPo_2=temp_voxel_porosity[int(len(temp_voxel_porosity)/3)],
-                 VoxPo_3=temp_voxel_porosity[int(len(temp_voxel_porosity)/3*2)])
+                 Fy_pi=temp_pile_force_y)
     
     # export VTK file
     if initial_parameters["flag_output_VTK"] and state_index >= 2:
@@ -393,7 +345,7 @@ def calcuratePileMechanicalValues(debug=False):
     
 
 def checkState():
-    global state_index, temp_initial_pile_disp, sphere_id, temp_prev_stage_iter
+    global state_index, sphere_id, temp_prev_stage_iter
 
     # initial gravity deposition
     if state_index == 0:
@@ -413,7 +365,7 @@ def checkState():
             for temp_sphere_id_positive_vel_each in temp_sphere_id_positive_vel:
                 O.bodies[int(temp_sphere_id_positive_vel_each)].state.vel[1] = 0
                         
-            if temp_sphere_data[2, :].max() == temp_maxY_with_3cn and temp_sphere_data[3, :].mean() > 3:
+            if temp_sphere_data[3, :].mean() > 3:
                 export.text(str(temp_sp_file_path))
                 
                 temp_num_layers = int(math.ceil(initial_parameters["sphere_pack_target_Y"] / temp_sphere_data[2, :].max()))
@@ -423,17 +375,9 @@ def checkState():
                     sphere_id.extend(temp_additional_spheres_id)
                     
                 print("Some spheres are added. now", len(sphere_id), "spheres exist")
-                    
                 
                 temp_prev_stage_iter = O.iter
                 state_index = 1
-            """
-            print(O.iter, state_index,
-                  '{:> 7.5f}'.format(temp_sphere_data[2, :].max()), 
-                  '{:> 7.5f}'.format(temp_sphere_data[3, :].mean()),
-                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()),
-                  '{:> 7.5f}'.format(temp_maxY_with_3cn))
-            """
             
 
     # copy particle assemblies to make the layer height equal to the target height
@@ -456,6 +400,7 @@ def checkState():
                 
             if temp_maxY_with_3cn > initial_parameters["sphere_pack_target_Y"] and temp_sphere_data[3, :].mean() > 3:
                 temp_unused_sphere_id = temp_sphere_data[0, temp_sphere_data[2, :] > initial_parameters["sphere_pack_target_Y"]]
+                
                 for temp_unused_sphere_id_each in temp_unused_sphere_id:
                      O.bodies.erase(int(temp_unused_sphere_id_each))
                      sphere_id.remove(int(temp_unused_sphere_id_each))
@@ -463,30 +408,21 @@ def checkState():
                 print(len(temp_unused_sphere_id), " spheres are deleted")
                 print("Now", len(sphere_id), "spheres exist")
                 
+                temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[1, :])]
+                temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
+                
+                print(temp_sphere_maxY_id, temp_sphere_maxY_radius)
+                
+                for pile_facet_id in pile_facet_data[:, 0]:
+                    O.bodies[int(pile_facet_id)].bounded = True
+                    O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
+                    O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
+                
                 temp_prev_stage_iter = O.iter
                 state_index = 2
-            
-            """
-            print(O.iter, state_index,
-                  '{:> 7.5f}'.format(temp_sphere_data[2, :].max()), 
-                  '{:> 7.5f}'.format(temp_sphere_data[3, :].mean()),
-                  '{:> 7.5f}'.format(temp_sphere_data[1, :].mean()),
-                  '{:> 7.5f}'.format(temp_maxY_with_3cn))
-            """
-        
+    
     
     elif state_index == 2:
-        temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
-        
-        
-        for pile_facet_id in pile_facet_data[:, 0]:
-            O.bodies[int(pile_facet_id)].bounded = True
-            O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
-            O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
-                                    
-        state_index = 3
-
-    elif state_index == 3:
         
         if O.iter % 100 == 0:
             temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
@@ -498,9 +434,7 @@ def checkState():
                 O.pause()
 
 
-plot.plots = {"i": ("maxY_sp", "maxY_sp_3cn"),
-              " i": ("VoxPo_1","VoxPo_2","VoxPo_3"),
-              "i ": ("Cn"),
-              "Fy_pi": ("Pos")}
+plot.plots = {"i": ("maxY_sp", "maxY_sp_3cn"), "Fy_pi": ("Pos"),
+              "i ": ("Cn")}
 
 plot.plot()

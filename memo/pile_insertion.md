@@ -1,3 +1,13 @@
+# 2023/09/15
+- Paraviewの追加の使い方
+    - 粒子の軌跡を描画する方法
+        - https://www2.kaiyodai.ac.jp/~kentaro/materials/new_HP/particle_sim/16visualization_paraview.html
+    - やっぱり部分領域の密度を求めたい
+        - 方法1, CUDAで後処理
+        - 方法2, Paraviewで後処理
+    - 繰り返し堆積させる時間がもったいない
+        - 重力堆積によるテンプレートを作成してしまう
+
 # 2023/08/30
 - `2023-08-23_14-14-07`のデータ整理
     - 杭の貫入開始のインデックスは808
