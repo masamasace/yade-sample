@@ -46,7 +46,7 @@ initial_parameters = {
     "flag_import_heavy_stl_model": False,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 100,
-    "export_data_iter_interval" : 5000,
+    "export_data_iter_interval" : 1000,
 }
 
 ############## Temporary Variables ##############
@@ -150,16 +150,8 @@ base_facet_1 = utils.facet([Vector3(temp_base_facet_x_min, temp_base_facet_Y, te
                             fixed=True,
                             wire=False,
                             material=material_facet_base_Id)
-""
-"""base_facet_2 = utils.facet([Vector3(initial_parameters["simulation_box_width"], temp_base_facet_Y, initial_parameters["simulation_box_width"]), 
-                             Vector3(initial_parameters["simulation_box_width"], temp_base_facet_Y, 0),
-                             Vector3(0, temp_base_facet_Y, initial_parameters["simulation_box_width"])],
-                            fixed=True,
-                            wire=False,
-                            material=material_facet_base_Id)"""
 
-base_top_facet_id = O.bodies.append([base_facet_1])
-
+base_facet_id = O.bodies.append([base_facet_1])
 
 ############## Sphere ##############
 
@@ -247,20 +239,24 @@ O.engines = [
     InteractionLoop(
         [Ig2_Sphere_Sphere_ScGeom(), Ig2_Facet_Sphere_ScGeom()],
         [Ip2_FrictMat_FrictMat_FrictPhys()],
-        [Law2_ScGeom_FrictPhys_CundallStrack()]
+        [Law2_ScGeom_FrictPhys_CundallStrack()],
+        label="interaction_loop"
     ),
     NewtonIntegrator(damping=0.2, gravity=(0, -9.81, 0)),
     PyRunner(iterPeriod=initial_parameters["export_data_iter_interval"], command="exportData()"),
-    PyRunner(iterPeriod=initial_parameters["check_state_iter_interval"], command="checkState()")
+    PyRunner(iterPeriod=initial_parameters["check_state_iter_interval"], command="checkState()"),
+    PyRunner(iterPeriod=1, command="deleteParticles()", nDo=1, dead=True, label="delete_particles")
 ]
 
 
 ############## Microcodes for exporting dataset ##############
-# Enable tracking energy
-O.trackEnergy = True
-
 # make an instance for VTK dataset
 vtk_recorder = VTKRecorder(fileName=str(output_VTK_folder_path)+'/vtk-', recorders=['spheres', 'facets', 'intr', 'coordNumber', 'stress', 'force', 'bstresses', 'velocity'])
+
+plot.plots = {"i": ("maxY_sp", "maxY_sp_3cn"), "Fy_pi": ("Pos"),
+              "i ": ("Cn")}
+
+plot.plot()
 
 O.run()
 
@@ -394,42 +390,14 @@ def checkState():
                 temp_maxY_with_3cn = 0
                 
             if temp_maxY_with_3cn > initial_parameters["sphere_pack_target_Y"] and temp_sphere_data[3, :].mean() > 3:
-                temp_unused_sphere_id = temp_sphere_data[0, temp_sphere_data[2, :] > initial_parameters["sphere_pack_target_Y"]]
-                
-                for temp_unused_sphere_id_each in temp_unused_sphere_id:
-                     O.bodies.erase(int(temp_unused_sphere_id_each))
-                     sphere_id.remove(int(temp_unused_sphere_id_each))
-                     
-                print(sphere_id)
-                print(len(temp_unused_sphere_id), " spheres are deleted")
-                print("Now", len(sphere_id), "spheres exist")
-                
-                temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
-                temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
-                temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
-                temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
-                
-                temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[2, :])]
-                temp_sphere_maxY = temp_sphere_data[2, :].max()
-                temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
-                temp_initial_pile_bottom_Y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
-                temp_offset = temp_initial_pile_bottom_Y - (temp_sphere_maxY + temp_sphere_maxY_radius * 1.1)
-                
-                for pile_facet_id in pile_facet_data[:, 0]:
-                    O.bodies[int(pile_facet_id)].bounded = True
-                    O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
-                    O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
-                    
-                    temp_pile_facet_pos_each = O.bodies[int(pile_facet_id)].state.pos
-                    temp_pile_facet_pos_each[1] -= temp_offset 
-                    O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
                 
                 temp_prev_stage_iter = O.iter
                 state_index = 2
+                delete_particles.dead = False
     
     
     elif state_index == 2:
-
+        
         temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
         
         flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
@@ -438,8 +406,42 @@ def checkState():
         if flag_bottom_reached or flag_pile_length:
             O.pause()
 
+def deleteParticles():
+    global sphere_id
 
-plot.plots = {"i": ("maxY_sp", "maxY_sp_3cn"), "Fy_pi": ("Pos"),
-              "i ": ("Cn")}
+    temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+    temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+    temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+    temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
 
-plot.plot()
+    temp_unused_sphere_id = temp_sphere_data[0, temp_sphere_data[2, :] > initial_parameters["sphere_pack_target_Y"]]
+        
+    for temp_unused_sphere_id_each in temp_unused_sphere_id:
+        O.bodies.erase(int(temp_unused_sphere_id_each))
+        sphere_id.remove(int(temp_unused_sphere_id_each))
+            
+    print(len(temp_unused_sphere_id), " spheres are deleted")
+    print("Now", len(sphere_id), "spheres exist at", O.iter, "steps")
+    
+    temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+    temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+    temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+    temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+    
+    temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[2, :])]
+    temp_sphere_maxY = temp_sphere_data[2, :].max()
+    temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
+    temp_initial_pile_bottom_Y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
+    temp_offset = temp_initial_pile_bottom_Y - (temp_sphere_maxY + temp_sphere_maxY_radius * 1.1)
+    
+    for pile_facet_id in pile_facet_data[:, 0]:
+        O.bodies[int(pile_facet_id)].bounded = True
+        O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
+        O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
+        
+        temp_pile_facet_pos_each = O.bodies[int(pile_facet_id)].state.pos
+        temp_pile_facet_pos_each[1] -= temp_offset 
+        O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
+
+    delete_particles.dead = True
+    
