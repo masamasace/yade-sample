@@ -43,10 +43,10 @@ initial_parameters = {
     "base_facet_Y_ratio_to_mean_diameter": 5,
     "simulation_box_width": 0.05,
     "flag_import_existing_pack_file" : False,
-    "flag_import_heavy_stl_model": True,
+    "flag_import_heavy_stl_model": False,
     "flag_output_VTK" : True,
-    "check_state_iter_interval" : 50,
-    "export_data_iter_interval" : 1000,
+    "check_state_iter_interval" : 100,
+    "export_data_iter_interval" : 5000,
 }
 
 ############## Temporary Variables ##############
@@ -251,7 +251,7 @@ O.engines = [
     ),
     NewtonIntegrator(damping=0.2, gravity=(0, -9.81, 0)),
     PyRunner(iterPeriod=initial_parameters["export_data_iter_interval"], command="exportData()"),
-    PyRunner(iterPeriod=1, command="checkState()")
+    PyRunner(iterPeriod=initial_parameters["check_state_iter_interval"], command="checkState()")
 ]
 
 
@@ -262,6 +262,7 @@ O.trackEnergy = True
 # make an instance for VTK dataset
 vtk_recorder = VTKRecorder(fileName=str(output_VTK_folder_path)+'/vtk-', recorders=['spheres', 'facets', 'intr', 'coordNumber', 'stress', 'force', 'bstresses', 'velocity'])
 
+O.run()
 
 ############## Subroutine ##############
 def exportData():
@@ -277,11 +278,6 @@ def exportData():
     temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
     temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
     
-    # export some values to matplotlib figure
-    if state_index <= 1:
-        temp_pile_position_y = 0
-
-
     if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
         temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
     else:
@@ -346,43 +342,42 @@ def calcuratePileMechanicalValues(debug=False):
 
 def checkState():
     global state_index, sphere_id, temp_prev_stage_iter
-
+    
     # initial gravity deposition
     if state_index == 0:
-        if O.iter % 100 == 0:
-            temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
-            temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
-            temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
-            temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
-            
-            if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
-                temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
-            else:
-                temp_maxY_with_3cn = 0
-            
-            temp_sphere_id_positive_vel = temp_sphere_data[0, temp_sphere_data[1, :] > 0]
-            
-            for temp_sphere_id_positive_vel_each in temp_sphere_id_positive_vel:
-                O.bodies[int(temp_sphere_id_positive_vel_each)].state.vel[1] = 0
-                        
-            if temp_sphere_data[3, :].mean() > 3:
-                export.text(str(temp_sp_file_path))
-                
-                temp_num_layers = int(math.ceil(initial_parameters["sphere_pack_target_Y"] / temp_sphere_data[2, :].max()))
-                for i in range(temp_num_layers):
-                    temp_additional_spheres = ymport.text(str(temp_sp_file_path), shift=Vector3(0, temp_sphere_data[2, :].max()*(i+1), 0), material=material_sphere_Id)
-                    temp_additional_spheres_id = O.bodies.append(temp_additional_spheres)
-                    sphere_id.extend(temp_additional_spheres_id)
+        temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+        temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+        temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+        temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
                     
-                print("Some spheres are added. now", len(sphere_id), "spheres exist")
+        if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
+            temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
+        else:
+            temp_maxY_with_3cn = 0
+        
+        temp_sphere_id_positive_vel = temp_sphere_data[0, temp_sphere_data[1, :] > 0]
+        
+        for temp_sphere_id_positive_vel_each in temp_sphere_id_positive_vel:
+            O.bodies[int(temp_sphere_id_positive_vel_each)].state.vel[1] = 0
+                    
+        if temp_sphere_data[3, :].mean() > 3:
+            export.text(str(temp_sp_file_path))
+            
+            temp_num_layers = int(math.ceil(initial_parameters["sphere_pack_target_Y"] / temp_sphere_data[2, :].max()))
+            for i in range(temp_num_layers):
+                temp_additional_spheres = ymport.text(str(temp_sp_file_path), shift=Vector3(0, temp_sphere_data[2, :].max()*(i+1), 0), material=material_sphere_Id)
+                temp_additional_spheres_id = O.bodies.append(temp_additional_spheres)
+                sphere_id.extend(temp_additional_spheres_id)
                 
-                temp_prev_stage_iter = O.iter
-                state_index = 1
+            print("Some spheres are added. now", len(sphere_id), "spheres exist")
+            
+            temp_prev_stage_iter = O.iter
+            state_index = 1
             
 
     # copy particle assemblies to make the layer height equal to the target height
     elif state_index == 1:
-        if O.iter % 100 == 0 and O.iter - temp_prev_stage_iter > 10000:
+        if O.iter - temp_prev_stage_iter > 10000:
             temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
             temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
             temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
@@ -404,34 +399,44 @@ def checkState():
                 for temp_unused_sphere_id_each in temp_unused_sphere_id:
                      O.bodies.erase(int(temp_unused_sphere_id_each))
                      sphere_id.remove(int(temp_unused_sphere_id_each))
-                
+                     
+                print(sphere_id)
                 print(len(temp_unused_sphere_id), " spheres are deleted")
                 print("Now", len(sphere_id), "spheres exist")
                 
-                temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[1, :])]
-                temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
+                temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+                temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+                temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+                temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
                 
-                print(temp_sphere_maxY_id, temp_sphere_maxY_radius)
+                temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[2, :])]
+                temp_sphere_maxY = temp_sphere_data[2, :].max()
+                temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
+                temp_initial_pile_bottom_Y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
+                temp_offset = temp_initial_pile_bottom_Y - (temp_sphere_maxY + temp_sphere_maxY_radius * 1.1)
                 
                 for pile_facet_id in pile_facet_data[:, 0]:
                     O.bodies[int(pile_facet_id)].bounded = True
                     O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
                     O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
+                    
+                    temp_pile_facet_pos_each = O.bodies[int(pile_facet_id)].state.pos
+                    temp_pile_facet_pos_each[1] -= temp_offset 
+                    O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
                 
                 temp_prev_stage_iter = O.iter
                 state_index = 2
     
     
     elif state_index == 2:
+
+        temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
         
-        if O.iter % 100 == 0:
-            temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
-            
-            flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
-            flag_pile_length = (temp_sphere_Y.max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
-        
-            if flag_bottom_reached or flag_pile_length:
-                O.pause()
+        flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
+        flag_pile_length = (temp_sphere_Y.max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
+    
+        if flag_bottom_reached or flag_pile_length:
+            O.pause()
 
 
 plot.plots = {"i": ("maxY_sp", "maxY_sp_3cn"), "Fy_pi": ("Pos"),
