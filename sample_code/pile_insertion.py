@@ -41,7 +41,7 @@ initial_parameters = {
     "pile_contact_frictional_coeffcient": 0.5,
     "sphere_pack_target_Y": 0.5,
     "base_facet_Y_ratio_to_mean_diameter": 5,
-    "simulation_box_width": 0.03,
+    "simulation_box_width": 0.05,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": False,
     "flag_output_VTK" : True,
@@ -400,7 +400,6 @@ def checkState():
                      O.bodies.erase(int(temp_unused_sphere_id_each))
                      sphere_id.remove(int(temp_unused_sphere_id_each))
                      
-                print(sphere_id)
                 print(len(temp_unused_sphere_id), " spheres are deleted")
                 print("Now", len(sphere_id), "spheres exist")
                 
@@ -413,7 +412,7 @@ def checkState():
                 temp_sphere_maxY = temp_sphere_data[2, :].max()
                 temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
                 temp_initial_pile_bottom_Y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
-                temp_offset = temp_initial_pile_bottom_Y - (temp_sphere_maxY + temp_sphere_maxY_radius * 1.1)
+                temp_offset = temp_initial_pile_bottom_Y - temp_sphere_maxY - temp_sphere_maxY_radius * 1.5
                 
                 for pile_facet_id in pile_facet_data[:, 0]:
                     O.bodies[int(pile_facet_id)].bounded = True
