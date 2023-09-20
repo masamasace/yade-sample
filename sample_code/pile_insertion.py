@@ -29,7 +29,7 @@ initial_parameters = {
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
-    "sphere_size_distribution_size_ratio": 60,
+    "sphere_size_distribution_size_ratio": 20,
     "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
     "sphere_density": 2650.0,
     "manual_contact_model": True,
@@ -41,12 +41,12 @@ initial_parameters = {
     "pile_contact_frictional_coeffcient": 0.5,
     "sphere_pack_target_Y": 0.5,
     "base_facet_Y_ratio_to_mean_diameter": 5,
-    "simulation_box_width": 0.05,
+    "simulation_box_width": 0.03,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": False,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 100,
-    "export_data_iter_interval" : 5000,
+    "export_data_iter_interval" : 1000,
 }
 
 ############## Temporary Variables ##############
@@ -424,6 +424,7 @@ def checkState():
                     temp_pile_facet_pos_each[1] -= temp_offset 
                     O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
                 
+                O.interactions.clear()
                 temp_prev_stage_iter = O.iter
                 state_index = 2
     
