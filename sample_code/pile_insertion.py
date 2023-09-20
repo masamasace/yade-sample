@@ -432,7 +432,7 @@ def checkState():
     # start loading
     elif state_index == 3:
         flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
-        flag_pile_length = (temp_sphere_Y.max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
+        flag_pile_length = (temp_sphere_data[2, :].max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
         
         if flag_bottom_reached or flag_pile_length:
             O.pause()
