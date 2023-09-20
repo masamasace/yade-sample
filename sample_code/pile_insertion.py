@@ -24,12 +24,12 @@ print("Start simulation started at " +
 ############## Constants ##############
 initial_parameters = {
     "pile_height": 0.3,            # Temporary value to be updated after loading stl file
-    "pile_insertion_velocity": -0.02,
+    "pile_insertion_velocity": -0.2,
     "flag_uniform_sphere_diameter": False,
     "sphere_diameter_mean": 0.003,
     "sphere_diameter_std_dev": 0,
     "sphere_size_distribution_size": [0.000050, 0.000075, 0.000106, 0.000250, 0.000425], # Ref: 平成25年度地盤材料試験の技能試験報告書
-    "sphere_size_distribution_size_ratio": 40,
+    "sphere_size_distribution_size_ratio": 60,
     "sphere_size_distribution_cumm": [0.0     , 0.04    , 0.12    , 0.88    , 1.0     ], # Ref: 平成25年度地盤材料試験の技能試験報告書
     "sphere_density": 2650.0,
     "manual_contact_model": True,
@@ -41,12 +41,12 @@ initial_parameters = {
     "pile_contact_frictional_coeffcient": 0.5,
     "sphere_pack_target_Y": 0.5,
     "base_facet_Y_ratio_to_mean_diameter": 5,
-    "simulation_box_width": 0.04,
+    "simulation_box_width": 0.05,
     "flag_import_existing_pack_file" : False,
     "flag_import_heavy_stl_model": False,
     "flag_output_VTK" : True,
     "check_state_iter_interval" : 100,
-    "export_data_iter_interval" : 1000,
+    "export_data_iter_interval" : 5000,
 }
 
 ############## Temporary Variables ##############
@@ -343,14 +343,13 @@ def calcuratePileMechanicalValues(debug=False):
 def checkState():
     global state_index, sphere_id, temp_prev_stage_iter
     
-    temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
-    temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
-    temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
-    temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
-    
     # initial gravity deposition
     if state_index == 0:
-
+        temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+        temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+        temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+        temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+                    
         if len(temp_sphere_data[2, temp_sphere_data[3, :]>=3]) != 0:
             temp_maxY_with_3cn = temp_sphere_data[2, temp_sphere_data[3, :]>=3].max()
         else:
@@ -379,6 +378,10 @@ def checkState():
     # copy particle assemblies to make the layer height equal to the target height
     elif state_index == 1:
         if O.iter - temp_prev_stage_iter > 10000:
+            temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+            temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+            temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+            temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
             
             temp_sphere_id_positive_vel = temp_sphere_data[0, temp_sphere_data[1, :] > 0]
             
@@ -397,46 +400,41 @@ def checkState():
                      O.bodies.erase(int(temp_unused_sphere_id_each))
                      sphere_id.remove(int(temp_unused_sphere_id_each))
                      
-                print(len(temp_unused_sphere_id), "spheres are deleted. Now", len(sphere_id), "spheres exist")
+                print(sphere_id)
+                print(len(temp_unused_sphere_id), " spheres are deleted")
+                print("Now", len(sphere_id), "spheres exist")
                 
-                O.interactions.clear()
+                temp_sphere_vel = [O.bodies[i].state.vel[1] for i in sphere_id]
+                temp_sphere_Y = [O.bodies[i].state.pos[1] for i in sphere_id]
+                temp_sphere_coord_num = [len(O.interactions.withBody(i)) for i in sphere_id]
+                temp_sphere_data = np.array([sphere_id, temp_sphere_vel, temp_sphere_Y, temp_sphere_coord_num])
+                
+                temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[2, :])]
+                temp_sphere_maxY = temp_sphere_data[2, :].max()
+                temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
+                temp_initial_pile_bottom_Y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
+                temp_offset = temp_initial_pile_bottom_Y - (temp_sphere_maxY + temp_sphere_maxY_radius * 1.1)
+                
+                for pile_facet_id in pile_facet_data[:, 0]:
+                    O.bodies[int(pile_facet_id)].bounded = True
+                    O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
+                    O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
+                    
+                    temp_pile_facet_pos_each = O.bodies[int(pile_facet_id)].state.pos
+                    temp_pile_facet_pos_each[1] -= temp_offset 
+                    O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
+                
                 temp_prev_stage_iter = O.iter
                 state_index = 2
     
-    # wait until it stablizes
+    
     elif state_index == 2:
-    
-        O.interactions.clear()
-    
-        temp_mean_coord = temp_sphere_data[3, :].mean()
+
+        temp_sphere_Y = np.array([O.bodies[i].state.pos[1] for i in sphere_id])
         
-        print(O.iter, temp_mean_coord)
-        
-        if temp_mean_coord >= 3:
-            
-            temp_sphere_maxY_id = temp_sphere_data[0, np.argmax(temp_sphere_data[2, :])]
-            temp_sphere_maxY = temp_sphere_data[2, :].max()
-            temp_sphere_maxY_radius = O.bodies[int(temp_sphere_maxY_id)].shape.radius
-            temp_initial_pile_bottom_Y = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1]
-            temp_offset = temp_initial_pile_bottom_Y - (temp_sphere_maxY + temp_sphere_maxY_radius * 1.1)
-            
-            for pile_facet_id in pile_facet_data[:, 0]:
-                O.bodies[int(pile_facet_id)].bounded = True
-                O.bodies[int(pile_facet_id)].state.blockedDOFs = "xyzXYZ"
-                O.bodies[int(pile_facet_id)].state.vel = Vector3(0, initial_parameters["pile_insertion_velocity"], 0)
-                
-                temp_pile_facet_pos_each = O.bodies[int(pile_facet_id)].state.pos
-                temp_pile_facet_pos_each[1] -= temp_offset 
-                O.bodies[int(pile_facet_id)].state.pos = temp_pile_facet_pos_each
-        
-            temp_prev_stage_iter = O.iter
-            state_index = 3
-    
-    # start loading
-    elif state_index == 3:
         flag_bottom_reached = O.bodies[int(pile_facets_id_bottom[0])].state.pos[1] <= temp_max_sphere_size
-        flag_pile_length = (temp_sphere_data[2, :].max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
-        
+        flag_pile_length = (temp_sphere_Y.max() - O.bodies[int(pile_facets_id_top[0])].state.pos[1]) >= 0
+    
         if flag_bottom_reached or flag_pile_length:
             O.pause()
 
