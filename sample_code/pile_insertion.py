@@ -322,7 +322,7 @@ def exportData():
                  Fy_pi=temp_pile_force_y)
     
     # export VTK file
-    if initial_parameters["flag_output_VTK"] and state_index >= :
+    if initial_parameters["flag_output_VTK"] and state_index >= 2:
         vtk_recorder()
 
 
