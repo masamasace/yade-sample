@@ -14,7 +14,7 @@ import json
 # given constants
 SEED = 1
 TARGET_VOID_RATIO = 0.6
-CONS_STRAIN_RATE = 1e-3
+CONS_STRAIN_RATE = 2.5e-2
 
 ## simulation cell size
 CELL_SIZE = 1.0
@@ -63,7 +63,7 @@ O.engines = [
         [Ip2_FrictMat_FrictMat_FrictPhys()],
         [Law2_ScGeom_FrictPhys_CundallStrack()]
     ),
-    NewtonIntegrator(damping=0.2),
+    NewtonIntegrator(damping=0),
     PyRunner(iterPeriod=1, command="checkState()")
 ]
 
@@ -80,9 +80,26 @@ O.trackEnergy = True
 def checkState():
 
     # get stress and strain data
-    [s00, s01, s02], [s10, s11, s12], [s20, s21, s22] = utils.getStress()
-    [e00, e01, e02], [e10, e11, e12], [e20, e21, e22] = O.cell.trsf
+    stress = utils.getStress()
+    strain = O.cell.trsf
 
-    #     
-############## シミュレーションの実行 ##############
+    # get porosity
+    porosity = utils.porosity()
+
+    # calculate derived parameters
+    mean_stress = stress.trace() / 3
+
+    # derived parameters
+    void_ratio = porosity / (1 - porosity)
+
+    # print data
+    print("e: %.4f, p: %.4f" % (void_ratio, mean_stress))
+
+    # check if the simulation is converged
+    if void_ratio < TARGET_VOID_RATIO:
+        O.pause()
+        file_name = datetime.datetime.now().strftime("%Y%m%d%H%M%S") + ".gz"
+        dir_name = Path("temp")
+        dir_name.mkdir(exist_ok=True)
+        O.save(str(dir_name / file_name))
 
