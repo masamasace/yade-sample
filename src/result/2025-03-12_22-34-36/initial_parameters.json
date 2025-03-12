@@ -1,0 +1,20 @@
+{
+    "cell_coord_max_x": 0.075,
+    "cell_coord_max_y": 0.075,
+    "cell_coord_max_z": 0.025,
+    "sphere_density": 2650.0,
+    "sphere_radius_mean": 0.001,
+    "sphere_radius_variance": 0,
+    "flag_import_existing_pack_file": true,
+    "contact_young_modulus": 300000000.0,
+    "contact_poisson_ratio": 0.33,
+    "contact_friction_angle": 0.6108652381980153,
+    "contact_friction_angle_decrement_ratio_consolidation": 0.9,
+    "consolidation_void_ratio_target": 0.75,
+    "consolidation_stress": 100000.0,
+    "consolidation_max_strain_rate": 4000,
+    "consolidation_thres_ratio": 0.99,
+    "output_txt_iter_interval": 10,
+    "flag_output_VTK": true,
+    "output_VTK_iter_interval": 100
+}
