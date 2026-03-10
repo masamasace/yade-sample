@@ -1,0 +1,170 @@
+diff --git a/pkg/dem/CohesiveFrictionalContactLaw.cpp b/pkg/dem/CohesiveFrictionalContactLaw.cpp
+index c149e48..b842e66 100644
+--- a/pkg/dem/CohesiveFrictionalContactLaw.cpp
++++ b/pkg/dem/CohesiveFrictionalContactLaw.cpp
+@@ -366,6 +366,21 @@ bool Law2_ScGeom6D_CohFrictPhys_CohesionMoment::go(shared_ptr<IGeom>& ig, shared
+ 		scene->forces.addTorque(id1, -moment);
+ 		scene->forces.addTorque(id2, moment);
+ 	}
++	// Track elastic potential energy (per component and total)
++	if (scene->trackEnergy) {
++		Real eNorm = (phys->kn > 0) ? 0.5 * (phys->normalForce.squaredNorm() / phys->kn) : 0;
++		Real eShear = (phys->ks > 0) ? 0.5 * (phys->shearForce.squaredNorm() / phys->ks) : 0;
++		Real eBending = 0, eTwist = 0;
++		if (computeMoment) {
++			eBending = (phys->kr > 0) ? 0.5 * (phys->moment_bending.squaredNorm() / phys->kr) : 0;
++			eTwist = (phys->ktw > 0) ? 0.5 * (phys->moment_twist.squaredNorm() / phys->ktw) : 0;
++		}
++		scene->energy->add(eNorm, "elastPotentialNorm", elastPotentialNormIx, /*reset*/ true);
++		scene->energy->add(eShear, "elastPotentialShear", elastPotentialShearIx, /*reset*/ true);
++		scene->energy->add(eBending, "elastPotentialBending", elastPotentialBendingIx, /*reset*/ true);
++		scene->energy->add(eTwist, "elastPotentialTwist", elastPotentialTwistIx, /*reset*/ true);
++		scene->energy->add(eNorm + eShear + eBending + eTwist, "elastPotential", elastPotentialIx, /*reset*/ true);
++	}
+ 	return true;
+ }
+ 
+diff --git a/pkg/dem/CohesiveFrictionalContactLaw.hpp b/pkg/dem/CohesiveFrictionalContactLaw.hpp
+index f522c76..ca0fd19 100644
+--- a/pkg/dem/CohesiveFrictionalContactLaw.hpp
++++ b/pkg/dem/CohesiveFrictionalContactLaw.hpp
+@@ -118,6 +118,11 @@ public:
+ 		((int,normalDissipIx,-1,(Attr::hidden|Attr::noSave),"Index for normal dissipation (with O.trackEnergy)"))
+ 		((int,bendingDissipIx,-1,(Attr::hidden|Attr::noSave),"Index for bending dissipation (with O.trackEnergy)"))
+ 		((int,twistDissipIx,-1,(Attr::hidden|Attr::noSave),"Index for twist dissipation (with O.trackEnergy)"))
++		((int,elastPotentialIx,-1,(Attr::hidden|Attr::noSave),"Index for elastic potential energy (with O.trackEnergy)"))
++		((int,elastPotentialNormIx,-1,(Attr::hidden|Attr::noSave),"Index for normal elastic potential energy (with O.trackEnergy)"))
++		((int,elastPotentialShearIx,-1,(Attr::hidden|Attr::noSave),"Index for shear elastic potential energy (with O.trackEnergy)"))
++		((int,elastPotentialBendingIx,-1,(Attr::hidden|Attr::noSave),"Index for bending elastic potential energy (with O.trackEnergy)"))
++		((int,elastPotentialTwistIx,-1,(Attr::hidden|Attr::noSave),"Index for twist elastic potential energy (with O.trackEnergy)"))
+ 		((bool,consistencyCheck,true,(Attr::hidden|Attr::noSave),"Some parameters check are done when True, then it's turned false."))
+ 		((Real,creep_viscosity,1,,"creep viscosity [Pa.s/m]. probably should be moved to Ip2_CohFrictMat_CohFrictMat_CohFrictPhys."))
+ 		,,
+diff --git a/pkg/dem/NewtonIntegrator.cpp b/pkg/dem/NewtonIntegrator.cpp
+index 54dff0f..199ab26 100644
+--- a/pkg/dem/NewtonIntegrator.cpp
++++ b/pkg/dem/NewtonIntegrator.cpp
+@@ -13,6 +13,7 @@
+ #include <core/Clump.hpp>
+ #include <core/Scene.hpp>
+ #include <pkg/dem/NewtonIntegrator.hpp>
++#include <preprocessing/dem/Shop.hpp>
+ 
+ namespace yade { // Cannot have #include directive inside.
+ 
+@@ -78,13 +79,12 @@ void NewtonIntegrator::updateEnergy(const shared_ptr<Body>& b, const State* stat
+ 	assert(b->isStandalone() || b->isClump());
+ 	// always positive dissipation, by-component: |F_i|*|v_i|*damping*dt (|T_i|*|ω_i|*damping*dt for rotations)
+ 	if (damping != 0. && state->isDamped) {
+-		scene->energy->add(
+-		        fluctVel.cwiseAbs().dot((f + state->mass * gravity).cwiseAbs()) * damping * scene->dt,
+-		        "nonviscDamp",
+-		        nonviscDampIx,
+-		        /*non-incremental*/ false);
++		Real dampTrans = fluctVel.cwiseAbs().dot((f + state->mass * gravity).cwiseAbs()) * damping * scene->dt;
+ 		// when the aspherical integrator is used, torque is damped instead of ang acceleration; this code is only approximate
+-		scene->energy->add(state->angVel.cwiseAbs().dot(m.cwiseAbs()) * damping * scene->dt, "nonviscDamp", nonviscDampIx, false);
++		Real dampRot = state->angVel.cwiseAbs().dot(m.cwiseAbs()) * damping * scene->dt;
++		scene->energy->add(dampTrans, "nonviscDampTrans", nonviscDampTransIx, /*non-incremental*/ false);
++		scene->energy->add(dampRot, "nonviscDampRot", nonviscDampRotIx, /*non-incremental*/ false);
++		scene->energy->add(dampTrans + dampRot, "nonviscDamp", nonviscDampIx, /*non-incremental*/ false);
+ 	}
+ 	// kinetic energy
+ 	Real Etrans = .5 * state->mass * fluctVel.squaredNorm();
+@@ -318,6 +318,13 @@ void NewtonIntegrator::action()
+ #endif
+ 	timingDeltas->checkpoint("sync max vel");
+ 	if (scene->isPeriodic) {
++		// Boundary work: trapezoidal averaging of velGrad, current stress
++		if (trackEnergy) {
++			Matrix3r stressTensor = Shop::getStress();
++			Real dW = (0.5 * (prevVelGrad + scene->cell->velGrad) * stressTensor).trace()
++			          * scene->dt * scene->cell->getVolume();
++			scene->energy->add(-dW, "velGradWork", velGradWorkIx, /*non-incremental*/ false);
++		}
+ 		prevCellSize = scene->cell->getSize();
+ 		prevVelGrad = scene->cell->prevVelGrad = scene->cell->velGrad;
+ 	}
+diff --git a/pkg/dem/NewtonIntegrator.hpp b/pkg/dem/NewtonIntegrator.hpp
+index 104994a..1abd73f 100644
+--- a/pkg/dem/NewtonIntegrator.hpp
++++ b/pkg/dem/NewtonIntegrator.hpp
+@@ -87,6 +87,9 @@ public:
+ 		((bool,warnNoForceReset,true,,"Warn when forces were not resetted in this step by :yref:`ForceResetter`; this mostly points to :yref:`ForceResetter` being forgotten incidentally and should be disabled only with a good reason."))
+ 		// energy tracking
+ 		((int,nonviscDampIx,-1,(Attr::hidden|Attr::noSave),"Index of the energy dissipated using the non-viscous damping (:yref:`damping<NewtonIntegrator.damping>`)."))
++		((int,nonviscDampTransIx,-1,(Attr::hidden|Attr::noSave),"Index for translational non-viscous damping dissipation."))
++		((int,nonviscDampRotIx,-1,(Attr::hidden|Attr::noSave),"Index for rotational non-viscous damping dissipation."))
++		((int,velGradWorkIx,-1,(Attr::hidden|Attr::noSave),"Index for work done by velocity gradient in periodic cells."))
+ 		((bool,kinSplit,false,,"Whether to separately track translational and rotational kinetic energy."))
+                 ((bool,dampGravity,true,,"By default, numerical damping applies to ALL forces, even gravity. If this option is set to false, then the gravity forces calculated based on NewtonIntegrator.gravity are excluded from the damping calculation. This option has no effect on gravity forces added by GravityEngine. "))
+ 		((int,kinEnergyIx,-1,(Attr::hidden|Attr::noSave),"Index for kinetic energy in scene->energies."))
+diff --git a/postprocessing/vtk/VTKRecorder.cpp b/postprocessing/vtk/VTKRecorder.cpp
+index 46d9217..fcb8e9a 100644
+--- a/postprocessing/vtk/VTKRecorder.cpp
++++ b/postprocessing/vtk/VTKRecorder.cpp
+@@ -582,7 +582,7 @@ void VTKRecorder::action()
+ 			const auto iterId1 = bIdVector.find(I->getId1());
+ 			const auto iterId2 = bIdVector.find(I->getId2());
+ 
+-			if (iterId2 == bIdVector.end() || iterId2 == bIdVector.end()) continue;
++			if (iterId1 == bIdVector.end() || iterId2 == bIdVector.end()) continue;
+ 
+ 			const auto setId1Line = iterId1->second;
+ 			const auto setId2Line = iterId2->second;
+@@ -619,12 +619,14 @@ void VTKRecorder::action()
+ 				const vtkIdType idPtB = intrBodyPos->InsertNextPoint(ptB);
+ 
+ 				vtkSmartPointer<vtkLine> line1B(vtkSmartPointer<vtkLine>::New());
+-				line1B->GetPointIds()->SetId(0, setId2Line);
++				line1B->GetPointIds()->SetId(0, setId1Line);
+ 				line1B->GetPointIds()->SetId(1, idPtB);
++				intrCells->InsertNextCell(line1B);
+ 
+ 				vtkSmartPointer<vtkLine> lineA2(vtkSmartPointer<vtkLine>::New());
+ 				lineA2->GetPointIds()->SetId(0, idPtA);
+ 				lineA2->GetPointIds()->SetId(1, setId2Line);
++				intrCells->InsertNextCell(lineA2);
+ 				numAddValues = 2;
+ 			}
+ 			const NormShearPhys*         phys = YADE_CAST<NormShearPhys*>(I->phys.get());
+@@ -1235,7 +1237,7 @@ void VTKRecorder::action()
+ 			writer->SetInputData(intrPd);
+ 			writer->Write();
+ 
+-			if (rank == 0) {
++			if (parallelMode && rank == 0) {
+ 				vtkSmartPointer<vtkXMLPPolyDataWriter> pwriter = vtkSmartPointer<vtkXMLPPolyDataWriter>::New();
+ 				string                                 pfn     = fileName + "intrs_" + boost::lexical_cast<string>(scene->iter) + ".pvtp";
+ 				pwriter->EncodeAppendedDataOff();
+diff --git a/postprocessing/vtk/VTKRecorder.hpp b/postprocessing/vtk/VTKRecorder.hpp
+index d16e306..ec4b860 100644
+--- a/postprocessing/vtk/VTKRecorder.hpp
++++ b/postprocessing/vtk/VTKRecorder.hpp
+@@ -24,7 +24,7 @@ private:
+ 	vtkSmartPointer<vtkStructuredGrid> gridOfLSbody(shared_ptr<Body>, shared_ptr<LevelSet>);
+ #endif
+ #ifdef YADE_MPI
+-	int  rank, commSize;
++	int  rank = 0, commSize = 1;
+ 	bool sceneRefreshed = false;
+ #endif
+ public:
+@@ -40,7 +40,6 @@ public:
+ 		REC_VELOCITY,
+ 		REC_ID,
+ 		REC_CLUMPID,
+-		REC_SENTINEL,
+ 		REC_MATERIALID,
+ 		REC_STRESS,
+ 		REC_MASK,
+@@ -60,7 +59,8 @@ public:
+ 		REC_SUBDOMAIN,
+ 		REC_PARTIALSAT,
+ 		REC_HERTZMINDLIN,
+-		REC_LS
++		REC_LS,
++		REC_SENTINEL  // must be last
+ 	};
+ 	void action() override;
+ 	void addWallVTK(vtkSmartPointer<vtkQuad>& boxes, vtkSmartPointer<vtkPointsReal>& boxesPos, Vector3r& W1, Vector3r& W2, Vector3r& W3, Vector3r& W4);
