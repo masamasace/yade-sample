@@ -2,3 +2,4 @@
 !result/.gitkeep
 result/*
 # !memo/.gitkeep
+.DS_Store
